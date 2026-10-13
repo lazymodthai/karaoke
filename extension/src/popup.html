@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>🎤 YouTube Karaoke</h1>
+  </header>
+
+  <label class="row toggle">
+    <span>ตัดเสียงร้อง (AI)</span>
+    <input type="checkbox" id="enabled">
+  </label>
+
+  <label class="row slider">
+    <span>เสียงร้องไกด์ <output id="guideOut"></output></span>
+    <input type="range" id="guide" min="0" max="100" step="1">
+  </label>
+
+  <label class="row toggle sub">
+    <span>หยุดวิดีโอรอ AI ให้ตัดเสียงทัน</span>
+    <input type="checkbox" id="hold">
+  </label>
+
+  <p id="status" class="status"></p>
+  <p id="detail" class="hint"></p>
+
+  <p class="hint">
+    ครั้งแรกจะดาวน์โหลดโมเดล AI (~67MB) แล้วเก็บไว้ในเครื่อง ปุ่มไมค์บนแถบควบคุมของ YouTube ใช้เปิด/ปิดได้เหมือนกัน
+  </p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

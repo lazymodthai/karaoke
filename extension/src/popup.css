@@ -1,0 +1,36 @@
+:root {
+  --bg: #181818;
+  --fg: #f1f1f1;
+  --muted: #aaa;
+  --accent: #ff4e45;
+  --warn: #f5b942;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 280px;
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, "Sukhumvit Set", "Noto Sans Thai", sans-serif;
+}
+
+h1 { font-size: 15px; margin: 0 0 12px; }
+
+.row { display: flex; margin-bottom: 12px; }
+.toggle { justify-content: space-between; align-items: center; font-weight: 600; }
+.toggle.sub { font-weight: 400; }
+.slider { flex-direction: column; gap: 4px; }
+.slider output { color: var(--muted); }
+
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input:disabled { opacity: 0.4; }
+
+.status { margin: 4px 0 8px; min-height: 1.4em; }
+.status.warn { color: var(--warn); }
+.status.ok { color: #6fdc8c; }
+
+.hint { margin: 0 0 6px; color: var(--muted); font-size: 11px; }
