@@ -1,4 +1,4 @@
-const DEFAULTS = { enabled: false, strength: 1, hold: true, lyrics: false, lyricsOffset: 0 };
+const DEFAULTS = { enabled: false, strength: 1, hold: true, lyrics: false, lyricsOffset: 0, lyricsLang: 'th' };
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -10,6 +10,7 @@ const els = {
   detail: $('detail'),
   lyrics: $('lyrics'),
   lyricsOffset: $('lyricsOffset'),
+  lyricsLang: $('lyricsLang'),
   offsetOut: $('offsetOut'),
   lyricsStatus: $('lyricsStatus'),
 };
@@ -44,6 +45,7 @@ function render(s) {
   const off = Number(s.lyricsOffset);
   els.offsetOut.textContent = off === 0 ? '0 วินาที' : `${off > 0 ? 'เร็วขึ้น' : 'ช้าลง'} ${Math.abs(off).toFixed(1)} วินาที`;
   els.lyricsOffset.disabled = !s.lyrics;
+  els.lyricsLang.value = s.lyricsLang;
 }
 
 function setStatus(text, cls = '', detail = '') {
@@ -66,7 +68,7 @@ async function refreshStatus() {
     const ly = await chrome.tabs.sendMessage(tabId, { type: 'karaoke:lyrics-status' });
     els.lyricsStatus.textContent =
       ly.phase === 'ready'
-        ? `เนื้อเพลงจาก ${LYRICS_SOURCE[ly.source]}${ly.label ? ` (${ly.label})` : ''}${ly.synced ? ' · จัดจังหวะตามคลิปแล้ว' : ''}`
+        ? `เนื้อเพลงจาก ${LYRICS_SOURCE[ly.source]}${ly.label ? ` (${ly.label})` : ''}${{ captions: ' · จัดจังหวะตามคลิปแล้ว', vocals: ' · จัดจังหวะตามเสียงร้องแล้ว' }[ly.synced] || ''}`
         : LYRICS_PHASE[ly.phase] || '';
   } catch {
     // No content script: not a YouTube tab, or the tab was open before install.
@@ -84,6 +86,7 @@ els.enabled.addEventListener('change', () => save({ enabled: els.enabled.checked
 els.guide.addEventListener('input', () => save({ strength: 1 - els.guide.value / 100 }));
 els.hold.addEventListener('change', () => save({ hold: els.hold.checked }));
 els.lyrics.addEventListener('change', () => save({ lyrics: els.lyrics.checked }));
+els.lyricsLang.addEventListener('change', () => save({ lyricsLang: els.lyricsLang.value }));
 els.lyricsOffset.addEventListener('input', () => save({ lyricsOffset: Number(els.lyricsOffset.value) }));
 
 (async () => {

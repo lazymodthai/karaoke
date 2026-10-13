@@ -7,7 +7,7 @@
 
 (() => {
   const L = globalThis.KaraokeLyrics;
-  const DEFAULTS = { lyrics: false, lyricsOffset: 0 };
+  const DEFAULTS = { lyrics: false, lyricsOffset: 0, lyricsLang: 'th' };
   const INJECT_TAG = '__karaokeInject';
   const MIN_LINES = 3;
   const SHOW_BEFORE_SEC = 4; // show upcoming lines this early
@@ -142,16 +142,13 @@
     if (stale()) return;
     let found = null;
     if (info) {
-      const spoken = L.spokenLanguage(info.tracks, info.title);
-      const manual = info.tracks.filter((t) => t.kind !== 'asr');
-      const track = spoken
-        ? manual.find((t) => baseLang(t.lang) === spoken)
-        : manual.find((t) => baseLang(t.lang) === 'en') || (manual.length === 1 ? manual[0] : null);
+      const track = L.pickCaptionTrack(info.tracks, info.title, settings.lyricsLang);
       if (track) {
         const lines = parseCaptions(await getCaptions(videoId, track.lang, ''));
         if (lines.length >= MIN_LINES) found = { lines, source: 'cc' };
       }
-      const asr = info.tracks.find((t) => t.kind === 'asr');
+      const asrTracks = info.tracks.filter((t) => t.kind === 'asr');
+      const asr = asrTracks.find((t) => baseLang(t.lang) === settings.lyricsLang) || asrTracks[0];
       let asrLines = null;
       const getAsr = async () => (asrLines ??= parseCaptions(await getCaptions(videoId, asr.lang, 'asr')));
       if (!found && !stale()) {
@@ -181,13 +178,24 @@
     if (stale()) return;
 
     state = found
-      ? { videoId, phase: 'ready', lines: found.lines, source: found.source, label: found.label || null, synced: !!found.synced }
+      ? {
+          videoId,
+          phase: 'ready',
+          lines: found.lines,
+          source: found.source,
+          label: found.label || null,
+          synced: found.synced ? 'captions' : null,
+          // Album-timed lyrics with nothing to align them to yet: follow the
+          // separated vocals as the AI analyses the song (see syncToVocals).
+          album: found.source === 'lrclib' && !found.synced ? found.lines : null,
+        }
       : { videoId, phase: 'not-found', lines: [], source: null, label: null };
+    vocalsVersion = -1;
     updateButton();
     toast(
       found
         ? `🎤 เนื้อเพลงจาก${{ cc: 'คำบรรยายของคลิป', lrclib: ' LRCLIB', asr: 'คำบรรยายอัตโนมัติ (อาจไม่ตรงทุกคำ)' }[found.source]}${
-            found.synced ? ' · จัดจังหวะตามคลิปแล้ว' : ''
+            found.synced ? ' · จัดจังหวะตามคลิปแล้ว' : found.source === 'lrclib' ? ' · เปิดตัดเสียงร้องเพื่อจัดจังหวะอัตโนมัติ' : ''
           }`
         : '🎤 ไม่พบเนื้อเพลงสำหรับคลิปนี้',
     );
@@ -433,6 +441,32 @@
     btn.setAttribute('aria-pressed', String(settings.lyrics));
   }
 
+  // ======================= timing from the vocal track =======================
+
+  let vocalsVersion = -1;
+  let lastVocalSync = 0;
+
+  // Re-aligns album-timed lyrics as more of the song's vocals get analysed.
+  function syncToVocals() {
+    const v = globalThis.KaraokeVocals;
+    if (!state.album || !v || v.videoId !== state.videoId || v.version === vocalsVersion) return;
+    if (performance.now() - lastVocalSync < 3000) return;
+    lastVocalSync = performance.now();
+    vocalsVersion = v.version;
+    const aligned = L.alignToVocals(state.album, v.env, v.frameSec);
+    if (!aligned) return;
+    const first = state.synced !== 'vocals';
+    state.lines = aligned;
+    state.synced = 'vocals';
+    for (const row of rows) row.idx = -1; // re-render with the new timing
+    const offsets = aligned.map((l) => l.offset);
+    console.debug(
+      '[YouTube Karaoke] lyrics aligned to vocals:',
+      `offset ${Math.min(...offsets).toFixed(1)}..${Math.max(...offsets).toFixed(1)} s`,
+    );
+    if (first) toast('🎤 จัดจังหวะเนื้อเพลงตามเสียงร้องแล้ว');
+  }
+
   // ======================= wiring =======================
 
   function sync() {
@@ -450,6 +484,7 @@
         updateButton();
       }
     }
+    syncToVocals();
     startRender();
   }
 
@@ -463,7 +498,8 @@
     for (const [key, { newValue }] of Object.entries(changes)) {
       if (key in DEFAULTS) settings[key] = newValue;
     }
-    if ('lyrics' in changes) {
+    if ('lyricsLang' in changes && settings.lyrics) state.videoId = null; // look up again
+    if ('lyrics' in changes || 'lyricsLang' in changes) {
       if (settings.lyrics && state.phase === 'ready' && state.videoId === currentVideoId()) {
         toast('🎤 แสดงเนื้อเพลง');
       } else if (settings.lyrics) {
@@ -478,7 +514,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'karaoke:lyrics-status') {
-      sendResponse({ phase: settings.lyrics ? state.phase : 'off', source: state.source, label: state.label, synced: !!state.synced, lines: state.lines.length });
+      sendResponse({ phase: settings.lyrics ? state.phase : 'off', source: state.source, label: state.label, synced: state.synced, lines: state.lines.length });
     }
   });
 

@@ -148,3 +148,53 @@ test('alignment refuses unrelated captions', () => {
   const words = 'zzzz qqqq xxxx yyyy wwww vvvv'.split(' ').map((text, k) => ({ text, start: k, end: k + 1 }));
   assert.equal(L.alignToCaptions(lyrics, [{ start: 0, end: 6, text: '', words }]), null);
 });
+
+test('align album-timed lyrics to vocal activity (intro, inserted scene, unanalysed tail)', () => {
+  // 20 lines, album timing: one every 6 s from 30 s, each sung for 4 s.
+  const lines = Array.from({ length: 20 }, (_, i) => ({ start: 30 + i * 6, end: 34 + i * 6, text: `line ${i}`, words: [] }));
+  for (const l of lines) l.words = [{ text: l.text, start: l.start, end: l.end }];
+
+  // Video: +25 s intro; a 20 s spoken scene inserted before line 10 (+45 s).
+  const shift = (i) => (i < 10 ? 25 : 45);
+  const frameSec = 0.05;
+  const env = new Float32Array(Math.ceil(260 / frameSec)).fill(-55);
+  let seed = 1;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  lines.forEach((l, i) => {
+    const s = l.start + shift(i);
+    for (let t = s; t < s + 3.5; t += frameSec) if (rand() > 0.15) env[Math.floor(t / frameSec)] = -20 + rand() * 4;
+  });
+  for (let t = 114; t < 134; t += frameSec) env[Math.floor(t / frameSec)] = -48; // inserted scene: quiet dialogue bleed
+  for (let f = Math.floor(200 / frameSec); f < env.length; f++) env[f] = NaN; // not analysed yet
+
+  const aligned = L.alignToVocals(lines, env, frameSec);
+  assert.ok(aligned, 'alignment should succeed');
+  aligned.forEach((l, i) => {
+    const expected = lines[i].start + shift(i);
+    assert.ok(Math.abs(l.start - expected) <= 0.3, `line ${i}: ${l.start.toFixed(2)} vs ${expected}`);
+  });
+  // wipe follows singing: half-way through the sung part ≈ half the line
+  const p = L.progressAt(aligned[3], aligned[3].start + 1.75);
+  assert.ok(p.frac > 0.35 && p.frac < 0.65, `frac ${p.frac}`);
+  assert.equal(L.progressAt(aligned[3], aligned[3].start + 5).frac, 1); // silent tail: already full
+});
+
+test('vocal alignment declines when singing does not fit the lyrics', () => {
+  const lines = Array.from({ length: 8 }, (_, i) => ({ start: 10 + i * 5, end: 13 + i * 5, text: 'x', words: [{ text: 'x', start: 10 + i * 5, end: 13 + i * 5 }] }));
+  const env = new Float32Array(2000).fill(-20); // constant loudness: no onsets to match
+  assert.equal(L.alignToVocals(lines, env, 0.05), null);
+});
+
+test('caption track choice prefers the lyrics language, never a stray translation', () => {
+  const pick = (tracks, title, pref) => L.pickCaptionTrack(tracks, title, pref)?.lang ?? null;
+  const thAndEn = [{ lang: 'en', kind: '' }, { lang: 'th', kind: '' }];
+  assert.equal(pick(thAndEn, 'Lunar Cats - Paper Boats', 'th'), 'th');
+  // Thai song with only an English translation, no auto-captions: don't use it
+  assert.equal(pick([{ lang: 'en', kind: '' }], 'Lunar Cats - Paper Boats', 'th'), null);
+  // English song (auto-captions say English): English captions are the lyrics
+  assert.equal(pick([{ lang: 'en', kind: '' }, { lang: 'en', kind: 'asr' }], 'x', 'th'), 'en');
+  // sung in Thai per auto-captions, user prefers English: falls back to Thai
+  assert.equal(pick([{ lang: 'th-TH', kind: '' }, { lang: 'th', kind: 'asr' }], 'x', 'en'), 'th-TH');
+  assert.equal(pick([{ lang: 'ja', kind: '' }], 'x', 'auto'), 'ja');
+  assert.equal(pick([], 'x', 'th'), null);
+});

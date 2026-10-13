@@ -97,10 +97,42 @@
     return best;
   }
 
+  // Loudness of the separated vocals (dB per 50 ms frame, NaN = not analysed),
+  // shared with lyrics.js (same isolated world) to time lyrics to the singing.
+  const VOCAL_FRAME_SEC = 0.05;
+  const vocals = { frameSec: VOCAL_FRAME_SEC, env: new Float32Array(0), version: 0, videoId: null };
+  globalThis.KaraokeVocals = vocals;
+
+  function recordVocalEnvelope(start, [L, R], sampleRate) {
+    const end = start + L.length / sampleRate;
+    const f0 = Math.ceil(start / VOCAL_FRAME_SEC);
+    const f1 = Math.floor(end / VOCAL_FRAME_SEC);
+    if (f1 > vocals.env.length) {
+      const grown = new Float32Array(Math.max(f1, vocals.env.length * 2)).fill(NaN);
+      grown.set(vocals.env);
+      vocals.env = grown;
+    }
+    for (let f = f0; f < f1; f++) {
+      const a = Math.round((f * VOCAL_FRAME_SEC - start) * sampleRate);
+      const b = Math.min(L.length, Math.round(((f + 1) * VOCAL_FRAME_SEC - start) * sampleRate));
+      let sum = 0;
+      for (let i = a; i < b; i++) {
+        const m = (L[i] + R[i]) / 2;
+        sum += m * m;
+      }
+      vocals.env[f] = 10 * Math.log10(sum / Math.max(1, b - a) + 1e-10);
+    }
+    vocals.videoId = new URLSearchParams(location.search).get('v');
+    vocals.version++;
+  }
+
   function switchStream(id) {
     activeId = id;
     blocks.clear();
     stopStems();
+    vocals.env = new Float32Array(0);
+    vocals.videoId = null;
+    vocals.version++;
     lastPlayheadSent = -1;
     if (port) replayActive();
   }
@@ -159,6 +191,7 @@
         voc: msg.voc,
         bufs: null,
       });
+      recordVocalEnvelope(msg.start, msg.voc, msg.sampleRate);
       tick();
     }
     updateUi();

@@ -137,6 +137,11 @@
   // Where the highlight is within a line at time t: { word, frac } (word -1 = none).
   function progressAt(line, t) {
     if (t < line.start) return { word: -1, frac: 0 };
+    if (line.act) {
+      const { frameSec, cum } = line.act;
+      const f = Math.min(cum.length - 1, Math.floor((t - line.start) / frameSec));
+      return { word: 0, frac: cum[f] / cum[cum.length - 1] };
+    }
     const words = line.words;
     for (let i = words.length - 1; i >= 0; i--) {
       const w = words[i];
@@ -324,6 +329,143 @@
     return finalize(out);
   }
 
+  // ---------- aligning lyrics to the separated vocal track ----------
+  // When there are no auto-captions, use when singing is actually heard.
+  // env: vocal-stem loudness in dB per frame (NaN = not analysed yet).
+  // Each line gets an offset (video time - album time). Offsets stay constant
+  // between lines unless the audio strongly suggests a jump (an inserted scene,
+  // a cut chorus), found with a Viterbi pass over a grid of offsets.
+
+  const OFFSET_STEP = 0.1;
+  const DRIFT_BINS = 3; // free drift between consecutive lines: ±0.3 s
+  const JUMP_COST = 0.8;
+
+  function alignToVocals(lines, env, frameSec, { minOffset = -20, maxOffset = 180 } = {}) {
+    const n = env.length;
+    const knownVals = [];
+    for (let f = 0; f < n; f++) if (Number.isFinite(env[f])) knownVals.push(env[f]);
+    if (knownVals.length * frameSec < 10 || lines.length < 3) return null;
+    knownVals.sort((a, b) => a - b);
+    const loud = knownVals[Math.floor(knownVals.length * 0.9)];
+    const threshold = Math.max(-50, loud - 18);
+
+    // Prefix sums of "singing" frames and analysed frames.
+    const cumA = new Float64Array(n + 1);
+    const cumK = new Float64Array(n + 1);
+    for (let f = 0; f < n; f++) {
+      const known = Number.isFinite(env[f]);
+      cumK[f + 1] = cumK[f] + (known ? 1 : 0);
+      cumA[f + 1] = cumA[f] + (known && env[f] > threshold ? 1 : 0);
+    }
+    const activity = (t0, t1) => {
+      const f0 = Math.max(0, Math.min(n, Math.floor(t0 / frameSec)));
+      const f1 = Math.max(0, Math.min(n, Math.ceil(t1 / frameSec)));
+      const k = cumK[f1] - cumK[f0];
+      if (f1 <= f0 || k < (f1 - f0) * 0.5) return null;
+      return (cumA[f1] - cumA[f0]) / k;
+    };
+    // Singing should start right at the line and (usually) not just before it.
+    const onset = (s) => {
+      const head = activity(s, s + 0.5);
+      const before = activity(s - 0.6, s - 0.05);
+      return head == null ? null : head - (before ?? 0.5);
+    };
+    const score = (line, o) => {
+      const s = line.start + o;
+      const inside = activity(s, s + Math.min(line.end - line.start, 4));
+      if (inside == null) return 0;
+      return 0.5 * inside + 0.5 * (onset(s) ?? 0);
+    };
+
+    const S = Math.round((maxOffset - minOffset) / OFFSET_STEP) + 1;
+    const offsetAt = (k) => minOffset + k * OFFSET_STEP;
+    let prev = new Float32Array(S);
+    for (let k = 0; k < S; k++) prev[k] = score(lines[0], offsetAt(k)) - 0.001 * Math.abs(offsetAt(k));
+    const back = [];
+    for (let i = 1; i < lines.length; i++) {
+      let bestAll = 0;
+      for (let k = 1; k < S; k++) if (prev[k] > prev[bestAll]) bestAll = k;
+      const cur = new Float32Array(S);
+      const ptr = new Int32Array(S);
+      for (let k = 0; k < S; k++) {
+        let bk = k;
+        for (let d = -DRIFT_BINS; d <= DRIFT_BINS; d++) {
+          const j = k + d;
+          if (j >= 0 && j < S && prev[j] > prev[bk]) bk = j;
+        }
+        let from = bk;
+        let base = prev[bk];
+        if (prev[bestAll] - JUMP_COST > base) {
+          from = bestAll;
+          base = prev[bestAll] - JUMP_COST;
+        }
+        cur[k] = base + score(lines[i], offsetAt(k));
+        ptr[k] = from;
+      }
+      back.push(ptr);
+      prev = cur;
+    }
+    let k = 0;
+    for (let j = 1; j < S; j++) if (prev[j] > prev[k]) k = j;
+    const offsets = new Array(lines.length);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      offsets[i] = offsetAt(k);
+      if (i > 0) k = back[i - 1][k];
+    }
+
+    // Confidence: analysed lines should land on singing that starts there.
+    let scored = 0;
+    let total = 0;
+    let onsets = 0;
+    lines.forEach((line, i) => {
+      const s = line.start + offsets[i];
+      if (activity(s, s + Math.min(line.end - line.start, 4)) == null) return;
+      scored++;
+      total += score(line, offsets[i]);
+      onsets += onset(s) ?? 0;
+    });
+    if (scored < 3 || total / scored < 0.35 || onsets / scored < 0.25) return null;
+
+    const out = lines.map((line, i) => {
+      const o = offsets[i];
+      return {
+        ...line,
+        start: line.start + o,
+        end: line.end + o,
+        words: line.words.map((w) => ({ ...w, start: w.start + o, end: w.end + o })),
+        offset: o,
+      };
+    });
+    // Single-word lines: let the wipe advance only while singing is heard.
+    for (const line of out) {
+      if (line.words.length !== 1) continue;
+      const f0 = Math.floor(line.start / frameSec);
+      const f1 = Math.ceil(line.end / frameSec);
+      if (f0 < 0 || f1 > n || cumK[f1] - cumK[f0] < f1 - f0) continue;
+      const cum = new Float32Array(f1 - f0 + 1);
+      for (let f = f0; f < f1; f++) cum[f - f0 + 1] = cum[f - f0] + (env[f] > threshold ? 1 : 0);
+      if (cum[cum.length - 1] >= 2) line.act = { frameSec, cum };
+    }
+    return finalize(out);
+  }
+
+  // Which manual caption track to use as lyrics. `preferred` is the user's
+  // lyrics language ('th', 'en', ... or 'auto' = whatever is sung). Translated
+  // tracks are a trap: a Thai song often carries English captions, so when the
+  // sung language is unknown we only take the preferred language.
+  function pickCaptionTrack(tracks, title, preferred = 'th') {
+    const base = (l) => (l || '').split('-')[0].toLowerCase();
+    const manual = tracks.filter((t) => t.kind !== 'asr');
+    if (preferred && preferred !== 'auto') {
+      const hit = manual.find((t) => base(t.lang) === preferred);
+      if (hit) return hit;
+    }
+    const spoken = spokenLanguage(tracks, title);
+    if (spoken) return manual.find((t) => base(t.lang) === spoken) || null;
+    if (preferred === 'auto') return manual.length === 1 ? manual[0] : null;
+    return null;
+  }
+
   // The language a video is sung in: the auto-caption language when present,
   // else a guess from the title's script.
   function spokenLanguage(tracks, title) {
@@ -344,6 +486,8 @@
     progressAt,
     visiblePair,
     alignToCaptions,
+    alignToVocals,
+    pickCaptionTrack,
     spokenLanguage,
     cleanText,
   };

@@ -34,6 +34,15 @@
     <input type="checkbox" id="lyrics">
   </label>
 
+  <label class="row toggle sub">
+    <span>ภาษาเนื้อเพลง</span>
+    <select id="lyricsLang">
+      <option value="th">ไทย</option>
+      <option value="en">อังกฤษ</option>
+      <option value="auto">ตามภาษาที่ร้อง</option>
+    </select>
+  </label>
+
   <label class="row slider">
     <span>เลื่อนเวลาเนื้อเพลง <output id="offsetOut"></output></span>
     <input type="range" id="lyricsOffset" min="-5" max="5" step="0.1">
