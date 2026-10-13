@@ -37,3 +37,21 @@ input:disabled { opacity: 0.4; }
 
 hr { border: 0; border-top: 1px solid #333; margin: 10px 0 12px; }
 select { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 3px 6px; font: inherit; }
+.label { margin: 0; font-weight: 600; }
+.label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.reset {
+  padding: 2px 10px; background: transparent; color: var(--muted); border: 1px solid #444;
+  border-radius: 12px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.reset:hover:not(:disabled) { color: var(--fg); border-color: #666; }
+.reset:disabled { opacity: .4; cursor: default; }
+.stems { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+.stem {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px;
+  background: #2a2a2a; color: var(--fg); border: 1px solid #3a3a3a; border-radius: 8px;
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+.stem svg { width: 24px; height: 24px; }
+.stem .slash { display: none; }
+.stem[aria-pressed="true"] { border-color: var(--accent); background: #3a1f1e; }
+.stem[aria-pressed="true"] .slash { display: inline; }

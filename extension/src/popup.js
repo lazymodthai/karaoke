@@ -1,8 +1,19 @@
-const DEFAULTS = { enabled: false, strength: 1, hold: true, lyrics: false, lyricsOffset: 0, lyricsLang: 'th' };
+const DEFAULTS = {
+  removeVocals: false,
+  removeGuitar: false,
+  removeDrums: false,
+  removeBass: false,
+  strength: 1,
+  hold: true,
+  lyrics: false,
+  lyricsOffset: 0,
+  lyricsLang: 'th',
+};
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  enabled: $('enabled'),
+  stems: [...document.querySelectorAll('.stem')],
+  reset: $('reset'),
   guide: $('guide'),
   guideOut: $('guideOut'),
   hold: $('hold'),
@@ -36,10 +47,12 @@ let tabId = null;
 
 function render(s) {
   const guide = Math.round((1 - s.strength) * 100);
-  els.enabled.checked = s.enabled;
+  for (const b of els.stems) b.setAttribute('aria-pressed', String(!!s[b.dataset.key]));
+  els.reset.disabled = !els.stems.some((b) => s[b.dataset.key]);
   els.guide.value = guide;
   els.guideOut.textContent = guide === 0 ? 'ปิด' : `${guide}%`;
   els.hold.checked = s.hold;
+  els.guide.disabled = !s.removeVocals;
   els.lyrics.checked = s.lyrics;
   els.lyricsOffset.value = s.lyricsOffset;
   const off = Number(s.lyricsOffset);
@@ -62,6 +75,8 @@ async function refreshStatus() {
     if (res.state === 'downloading') text += ` ${Math.round(res.progress * 100)}%`;
     if (res.error) text += `: ${res.error}`;
     const detail = [];
+    const MODEL_NAMES = { mdx: 'โมเดลตัดเสียงร้อง', demucs: 'โมเดลแยกเครื่องดนตรี' };
+    if (res.models?.length) detail.push(res.models.map((m) => MODEL_NAMES[m]).join(' + '));
     if (res.backend) detail.push(res.backend === 'webgpu' ? 'ประมวลผลด้วย GPU (WebGPU)' : 'ประมวลผลด้วย CPU (ช้ากว่า)');
     if (res.realtime) detail.push(`เร็วกว่าเวลาจริง ${res.realtime.toFixed(1)} เท่า`);
     setStatus(text, cls, detail.join(' · '));
@@ -82,7 +97,10 @@ function save(patch) {
   setTimeout(refreshStatus, 300);
 }
 
-els.enabled.addEventListener('change', () => save({ enabled: els.enabled.checked }));
+els.reset.addEventListener('click', () => save(Object.fromEntries(els.stems.map((b) => [b.dataset.key, false]))));
+for (const b of els.stems) {
+  b.addEventListener('click', () => save({ [b.dataset.key]: b.getAttribute('aria-pressed') !== 'true' }));
+}
 els.guide.addEventListener('input', () => save({ strength: 1 - els.guide.value / 100 }));
 els.hold.addEventListener('change', () => save({ hold: els.hold.checked }));
 els.lyrics.addEventListener('change', () => save({ lyrics: els.lyrics.checked }));

@@ -8,11 +8,13 @@
 // 4. Adds a karaoke toggle button to the YouTube player controls.
 
 (() => {
-  const DEFAULTS = { enabled: false, strength: 1, hold: true };
+  // remove*: which stems to take out (any on = karaoke on). strength: how much
+  // of the separated vocals to take out (1 = all; less leaves a guide vocal).
+  const DEFAULTS = { removeVocals: false, removeGuitar: false, removeDrums: false, removeBass: false, strength: 1, hold: true };
+  const STEM_KEYS = ['removeVocals', 'removeGuitar', 'removeDrums', 'removeBass'];
   const INJECT_TAG = '__karaokeInject';
   const SR = 44100;
-  const GEN = 253440; // samples per separated block (must match engine/mdx.js)
-  const BLOCK_SEC = GEN / SR;
+  let blockSec = 253440 / SR; // separated block length; updated from the engine (depends on the model)
   const TICK_MS = 200;
   const DRIFT_SEC = 0.08;
   const KEEP_BEHIND_SEC = 60;
@@ -20,6 +22,8 @@
   const HOLD_GIVE_UP_SEC = 30;
 
   let settings = { ...DEFAULTS };
+  let configId = 1; // bumped whenever the stem selection changes
+  const isOn = () => STEM_KEYS.some((k) => settings[k]);
 
   // ---------- captured MSE streams ----------
   const msByUrl = new Map(); // blob url -> msId
@@ -48,6 +52,7 @@
   // ---------- hold ----------
   let heldByUs = false;
   let holdSince = 0;
+  let lastBlockAt = 0;
   let holdOverride = false;
   let resumingByUs = false;
 
@@ -145,7 +150,7 @@
   }
 
   function sendData(bytes, tso) {
-    if (!port || !settings.enabled) return;
+    if (!port || !isOn()) return;
     const sb = sbs.get(activeId);
     if (!sb || !isWebm(sb)) return;
     const copy = bytes.slice(0);
@@ -156,32 +161,97 @@
 
   function ensureEngine() {
     if (engineFrame) return;
-    engineFrame = document.createElement('iframe');
-    engineFrame.src = chrome.runtime.getURL('src/engine/engine.html');
-    engineFrame.style.display = 'none';
-    engineFrame.setAttribute('aria-hidden', 'true');
-    engineFrame.addEventListener('load', () => {
+    const frame = (engineFrame = document.createElement('iframe'));
+    frame.src = chrome.runtime.getURL('src/engine/engine.html');
+    frame.style.display = 'none';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.addEventListener('load', () => {
+      if (frame !== engineFrame) return; // removed before it loaded
       const channel = new MessageChannel();
-      engineFrame.contentWindow.postMessage({ type: 'karaoke-port' }, new URL(engineFrame.src).origin, [channel.port2]);
+      frame.contentWindow.postMessage({ type: 'karaoke-port' }, new URL(frame.src).origin, [channel.port2]);
       port = channel.port1;
       port.onmessage = onEngineMessage;
       sendConfig();
       replayActive();
     });
-    document.documentElement.appendChild(engineFrame);
+    document.documentElement.appendChild(frame);
+  }
+
+  // A background tab with a paused video shouldn't hold ~1 GB of models on the
+  // GPU (several YouTube tabs would starve each other): it goes dormant, which
+  // stops the engine (see manageEngine) until the tab is used again.
+  const DORMANT_AFTER_MS = 30000;
+  let idleSince = 0;
+  let dormant = false;
+
+  function updateDormant() {
+    const idle = document.hidden && (!video || video.paused);
+    if (!idle) idleSince = 0;
+    else if (!idleSince) idleSince = performance.now();
+    const next = !!idleSince && performance.now() - idleSince > DORMANT_AFTER_MS;
+    if (next !== dormant) {
+      dormant = next;
+      log(dormant ? 'tab idle in background' : 'tab active again');
+      sendConfig();
+    }
+  }
+
+  // The engine frame holds the models (up to ~1.2 GB). Removing the frame is
+  // the reliable way to free them, so drop it when it's been unneeded for a
+  // while; it's recreated (and the buffered audio replayed) on demand.
+  const ENGINE_IDLE_MS = 30000;
+  let engineUnneededSince = 0;
+  let lastEngineRestart = 0;
+
+  function destroyEngine(reason) {
+    if (!engineFrame) return;
+    log(`stopping AI engine (${reason})`);
+    engineFrame.remove();
+    engineFrame = null;
+    port = null;
+    engine = { phase: 'idle' };
+  }
+
+  function manageEngine() {
+    const needed = isOn() && !dormant;
+    if (needed) {
+      engineUnneededSince = 0;
+      ensureEngine();
+      // Recover from a lost GPU device by starting over (at most once a minute).
+      if (engine.deviceLost && performance.now() - lastEngineRestart > 60000) {
+        lastEngineRestart = performance.now();
+        destroyEngine('GPU device lost');
+        ensureEngine();
+      }
+      return;
+    }
+    if (!engineUnneededSince) engineUnneededSince = performance.now();
+    else if (performance.now() - engineUnneededSince > ENGINE_IDLE_MS) destroyEngine(dormant ? 'tab idle in background' : 'nothing to remove');
   }
 
   function sendConfig() {
-    port?.postMessage({ type: 'config', enabled: settings.enabled, hold: settings.hold });
+    port?.postMessage({
+      type: 'config',
+      enabled: isOn() && !dormant,
+      hold: settings.hold,
+      configId,
+      remove: {
+        vocals: settings.removeVocals,
+        guitar: settings.removeGuitar,
+        drums: settings.removeDrums,
+        bass: settings.removeBass,
+      },
+    });
   }
 
   function onEngineMessage({ data: msg }) {
     if (msg.type === 'status') {
       engine = msg;
-      if (msg.phase === 'error') lastError = msg.error;
     } else if (msg.type === 'block') {
-      if (msg.streamId !== activeId) return;
+      if (msg.streamId !== activeId || msg.configId !== configId) return;
       realtime = msg.realtime;
+      blockSec = msg.gen / msg.sampleRate;
+      lastBlockAt = performance.now();
       blocks.set(msg.k, {
         k: msg.k,
         start: msg.start,
@@ -203,9 +273,14 @@
     return document.querySelector('#movie_player video') || document.querySelector('video.html5-main-video');
   }
 
-  // Must be called from a user gesture when possible (our button click).
+  // Creates/resumes the AudioContext. Chrome only lets it start after the user
+  // has interacted with the page, so before that we don't create it at all
+  // (creating it early just logs an autoplay warning).
   function ensureContext() {
-    if (!ctx) ctx = new AudioContext({ latencyHint: 'playback' });
+    if (!ctx) {
+      if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
+      ctx = new AudioContext({ latencyHint: 'playback' });
+    }
     if (ctx.state !== 'running') ctx.resume().catch(() => {});
     return ctx;
   }
@@ -227,8 +302,7 @@
   // Routing a <video> into a suspended context would silence it, so only
   // build the graph once the context is actually running.
   function ensureGraph(v) {
-    ensureContext();
-    if (ctx.state !== 'running') {
+    if (!ensureContext() || ctx.state !== 'running') {
       waitForGesture();
       return null;
     }
@@ -305,11 +379,11 @@
     const vol = video.muted ? 0 : video.volume;
     g.orig.gain.setTargetAtTime(on ? 0 : 1, now, 0.015);
     stemBus.gain.setTargetAtTime(on ? vol : 0, now, 0.015);
-    vocGain.gain.setTargetAtTime(1 - settings.strength, now, 0.02);
+    vocGain.gain.setTargetAtTime(settings.removeVocals ? 1 - settings.strength : 0, now, 0.02);
   }
 
   function blockAt(t) {
-    const b = blocks.get(Math.floor(t / BLOCK_SEC));
+    const b = blocks.get(Math.floor(t / blockSec));
     return b && t >= b.start && t < b.start + b.duration ? b : null;
   }
 
@@ -330,7 +404,7 @@
       const lead = 0.03;
       const b = blockAt(t + lead);
       if (!b) {
-        const k = Math.floor((t + lead) / BLOCK_SEC);
+        const k = Math.floor((t + lead) / blockSec);
         if (k !== lastMissingBlock) log(`no separated block at ${t.toFixed(2)}s -> original audio`);
         lastMissingBlock = k;
         return false;
@@ -353,7 +427,7 @@
 
   function holdAllowed() {
     return (
-      settings.enabled &&
+      isOn() &&
       settings.hold &&
       !holdOverride &&
       engine.phase === 'ready' &&
@@ -364,18 +438,31 @@
     );
   }
 
+  // Seconds of separated audio ready back to back from t.
+  function readyAhead(t) {
+    let end = t;
+    for (let k = Math.floor(t / blockSec); blocks.has(k); k++) {
+      const b = blocks.get(k);
+      end = b.start + b.duration;
+    }
+    return end - t;
+  }
+
+  // Resume only with enough audio buffered that we won't have to stop again
+  // right away: a slower machine waits longer once instead of stuttering.
   function readyToResume(t) {
-    const b = blockAt(t);
-    if (!b) return false;
-    const nextStart = b.start + b.duration;
-    const nextKnown = blocks.has(b.k + 1) || !(nextStart < video.duration - 0.1);
-    return nextKnown || (realtime != null && realtime > 1.3);
+    if (!blockAt(t)) return false;
+    const remaining = video.duration - t - 0.1;
+    const need = realtime == null || realtime >= 1.5 ? blockSec : realtime >= 1 ? 15 : 40;
+    return readyAhead(t) >= Math.min(need, remaining);
   }
 
   function updateHold(t) {
     if (heldByUs) {
-      const giveUp = performance.now() - holdSince > HOLD_GIVE_UP_SEC * 1000;
+      // Give up only if the AI stopped making progress (e.g. no audio arrives).
+      const giveUp = performance.now() - Math.max(holdSince, lastBlockAt) > HOLD_GIVE_UP_SEC * 1000;
       if (!holdAllowed() || giveUp || readyToResume(t)) {
+        log(`resume at ${t.toFixed(1)}s after ${((performance.now() - holdSince) / 1000).toFixed(1)}s, ${readyAhead(t).toFixed(1)}s ready${giveUp ? ' (gave up)' : ''}`);
         heldByUs = false;
         if (giveUp) holdOverride = true;
         resumingByUs = true;
@@ -386,6 +473,7 @@
     if (!video.paused && !video.seeking && holdAllowed() && !blockAt(t)) {
       heldByUs = true;
       holdSince = performance.now();
+      log(`hold at ${t.toFixed(1)}s: separated audio not ready (AI ${realtime ? realtime.toFixed(2) + 'x realtime' : 'starting'})`);
       video.pause();
     }
   }
@@ -414,21 +502,23 @@
   }
 
   function tick() {
-    ensureButton();
+    ensureButtons();
     const v = findVideo();
     if (v) attachVideo(v);
     if (!video) return updateUi();
 
+    updateDormant();
+    manageEngine();
     const sbId = findActiveSb();
     if (sbId !== activeId) switchStream(sbId);
 
     const t = video.currentTime;
-    if (port && settings.enabled && Math.abs(t - lastPlayheadSent) > 0.25) {
+    if (port && isOn() && Math.abs(t - lastPlayheadSent) > 0.25) {
       lastPlayheadSent = t;
       port.postMessage({ type: 'playhead', t, duration: video.duration });
     }
 
-    if (!settings.enabled) {
+    if (!isOn()) {
       if (ctx && graphs.has(video)) {
         stopStems();
         setMix(false, graphs.get(video));
@@ -461,8 +551,8 @@
   // ======================= status & UI =======================
 
   function currentStatus() {
-    if (!settings.enabled) return { state: 'off' };
-    if (lastError && engine.phase !== 'ready') return { state: 'error', error: lastError };
+    if (!isOn()) return { state: 'off' };
+    if (engine.phase === 'error') return { state: 'error', error: engine.error };
     if (engine.phase === 'downloading') return { state: 'downloading', progress: engine.progress || 0 };
     if (engine.phase !== 'ready') return { state: 'initializing' };
     if (needsGesture) return { state: 'needs-gesture' };
@@ -476,7 +566,7 @@
     return { state: 'processing' };
   }
 
-  let btn = null;
+  const buttons = new Map(); // settings key -> button
   let badge = null;
   // YouTube enforces Trusted Types, so build icons with DOM APIs, not innerHTML.
   function svg(tag, attrs, children = []) {
@@ -486,25 +576,44 @@
     return el;
   }
 
-  // Modern ("delhi") player icons are 24px outlines that YouTube pads itself;
-  // the classic player uses 36px viewBoxes scaled to the button.
-  function micIcon(modern) {
-    if (modern) {
-      const stroke = { stroke: 'white', 'stroke-width': '2', 'stroke-linecap': 'round' };
-      return svg('svg', { fill: 'none', width: '24', height: '24', viewBox: '0 0 24 24', 'aria-hidden': 'true' }, [
-        svg('rect', { x: '9', y: '2', width: '6', height: '12', rx: '3', ...stroke }),
-        svg('path', { d: 'M5 11a7 7 0 0 0 14 0M12 18v4', ...stroke }),
-        svg('path', { class: 'karaoke-slash', d: 'M3 3l18 18', ...stroke }),
-      ]);
-    }
-    return svg('svg', { viewBox: '0 0 36 36', width: '100%', height: '100%', 'aria-hidden': 'true' }, [
-      svg('path', {
-        fill: '#fff',
-        d: 'M18 9a3.5 3.5 0 0 0-3.5 3.5v5.5a3.5 3.5 0 0 0 7 0v-5.5A3.5 3.5 0 0 0 18 9zm-6.5 9h2a4.5 4.5 0 0 0 9 0h2a6.5 6.5 0 0 1-5.5 6.42V27h-2v-2.58A6.5 6.5 0 0 1 11.5 18z',
-      }),
-      svg('path', { class: 'karaoke-slash', d: 'M10 10l16 16', stroke: '#fff', 'stroke-width': '2', 'stroke-linecap': 'round' }),
+  // 24px outline icons with a slash shown while that stem is removed. Modern
+  // ("delhi") player icons are 24px and padded by YouTube; the classic player
+  // scales a 36px box, so the same drawing is centered in one.
+  const STROKE = { stroke: 'white', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+  const DOT = { fill: 'white' };
+  const ICONS = {
+    removeVocals: () => [
+      svg('rect', { x: '9', y: '2', width: '6', height: '12', rx: '3', ...STROKE }),
+      svg('path', { d: 'M5 11a7 7 0 0 0 14 0M12 18v4', ...STROKE }),
+    ],
+    removeGuitar: () => [
+      svg('path', { d: 'M12 9c-2.1 0-3.6 1.3-3.6 3 0 .9.4 1.4.4 2 0 .7-1.8 1.3-1.8 3.4 0 2.5 2.3 4.6 5 4.6s5-2.1 5-4.6c0-2.1-1.8-2.7-1.8-3.4 0-.6.4-1.1.4-2 0-1.7-1.5-3-3.6-3z', ...STROKE }),
+      svg('path', { d: 'M12 9V2M10.5 2h3M10 18h4', ...STROKE }),
+    ],
+    removeDrums: () => [
+      svg('ellipse', { cx: '12', cy: '12', rx: '8', ry: '3', ...STROKE }),
+      svg('path', { d: 'M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5M8.5 9.5L5 3.5M15.5 9.5L19 3.5', ...STROKE }),
+    ],
+    removeBass: () => [
+      // bass clef
+      svg('path', { d: 'M5 9a5 5 0 0 1 10 0c0 4.5-4 8.5-10 11', ...STROKE }),
+      svg('circle', { cx: '6', cy: '9', r: '1.8', ...DOT }),
+      svg('circle', { cx: '19', cy: '7', r: '1.3', ...DOT }),
+      svg('circle', { cx: '19', cy: '12', r: '1.3', ...DOT }),
+    ],
+  };
+
+  function stemIcon(key, modern) {
+    const size = modern
+      ? { width: '24', height: '24', viewBox: '0 0 24 24' }
+      : { width: '100%', height: '100%', viewBox: '-6 -6 36 36' };
+    return svg('svg', { fill: 'none', 'aria-hidden': 'true', ...size }, [
+      ...ICONS[key](),
+      svg('path', { class: 'karaoke-slash', d: 'M3 3l18 18', ...STROKE }),
     ]);
   }
+
+  const STEM_LABELS = { removeVocals: 'ตัดเสียงร้อง', removeGuitar: 'ตัดกีตาร์', removeDrums: 'ตัดกลอง', removeBass: 'ตัดเบส' };
 
   function injectStyle() {
     if (document.getElementById('karaoke-style')) return;
@@ -524,50 +633,58 @@
     document.documentElement.appendChild(style);
   }
 
-  function ensureButton() {
+  function ensureButtons() {
     const player = document.getElementById('movie_player');
     const controls = player?.querySelector('.ytp-right-controls');
     if (!controls) return;
-    if (btn && controls.contains(btn)) return;
+    if (buttons.size && [...buttons.values()].every((b) => controls.contains(b))) return;
     injectStyle();
-    btn = document.createElement('button');
-    btn.className = 'ytp-button karaoke-btn';
+    for (const b of buttons.values()) b.remove();
+    buttons.clear();
     const modern = controls.querySelector('.ytp-subtitles-button svg')?.getAttribute('viewBox') === '0 0 24 24';
-    btn.append(micIcon(modern));
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!settings.enabled) ensureContext(); // a click is a user gesture: unlock audio now
-      chrome.storage.local.set({ enabled: !settings.enabled });
-    });
-    const anchor = controls.querySelector('.ytp-subtitles-button');
-    if (anchor) anchor.parentNode.insertBefore(btn, anchor);
-    else controls.prepend(btn);
+    // Stem buttons go before the lyrics button (if any) and the CC button.
+    const anchor = controls.querySelector('.karaoke-lyrics-btn') || controls.querySelector('.ytp-subtitles-button');
+    for (const key of STEM_KEYS) {
+      const btn = document.createElement('button');
+      btn.className = 'ytp-button karaoke-btn';
+      btn.dataset.stem = key;
+      btn.append(stemIcon(key, modern));
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!settings[key]) ensureContext(); // a click is a user gesture: unlock audio now
+        chrome.storage.local.set({ [key]: !settings[key] });
+      });
+      if (anchor) anchor.parentNode.insertBefore(btn, anchor);
+      else controls.append(btn);
+      buttons.set(key, btn);
+    }
     updateUi();
   }
 
   const LABELS = {
-    off: 'คาราโอเกะ: ปิด',
-    downloading: 'คาราโอเกะ: กำลังดาวน์โหลดโมเดล AI',
-    initializing: 'คาราโอเกะ: กำลังเตรียมโมเดล AI',
-    'needs-gesture': 'คาราโอเกะ: คลิกที่วิดีโอเพื่อเริ่ม',
-    holding: 'คาราโอเกะ: รอ AI ตัดเสียง',
-    processing: 'คาราโอเกะ: AI กำลังตัดเสียง',
-    active: 'คาราโอเกะ: เปิด',
-    'no-video': 'คาราโอเกะ: ไม่พบวิดีโอ',
-    'no-stream': 'คาราโอเกะ: รอรับเสียงจากวิดีโอ',
-    unsupported: 'คาราโอเกะ: รูปแบบเสียงนี้ยังไม่รองรับ',
-    error: 'คาราโอเกะ: เกิดข้อผิดพลาด',
+    off: 'ไม่ได้ตัด',
+    downloading: 'กำลังดาวน์โหลดโมเดล AI',
+    initializing: 'กำลังเตรียมโมเดล AI',
+    'needs-gesture': 'คลิกที่วิดีโอเพื่อเริ่ม',
+    holding: 'รอ AI ตัดเสียง',
+    processing: 'AI กำลังตัดเสียง',
+    active: 'กำลังตัด',
+    'no-video': 'ไม่พบวิดีโอ',
+    'no-stream': 'รอรับเสียงจากวิดีโอ',
+    unsupported: 'รูปแบบเสียงนี้ยังไม่รองรับ',
+    error: 'เกิดข้อผิดพลาด',
   };
 
   function updateUi() {
     const s = currentStatus();
-    if (btn) {
-      const busy = !['off', 'active', 'error', 'unsupported', 'no-stream'].includes(s.state);
-      btn.dataset.state = s.state === 'off' ? 'off' : busy ? 'busy' : 'on';
-      const label = LABELS[s.state] + (s.error ? ` (${s.error})` : '');
+    const busy = !['off', 'active', 'error', 'unsupported', 'no-stream'].includes(s.state);
+    for (const [key, btn] of buttons) {
+      const removed = !!settings[key];
+      btn.dataset.state = !removed ? 'off' : busy ? 'busy' : 'on';
+      const label = `${STEM_LABELS[key]}: ${removed ? LABELS[s.state] + (s.error ? ` (${s.error})` : '') : LABELS.off}`;
       btn.setAttribute('aria-label', label);
       btn.title = label;
-      btn.setAttribute('aria-pressed', String(settings.enabled));
+      btn.setAttribute('aria-pressed', String(removed));
     }
     const player = document.getElementById('movie_player');
     const showBadge = s.state === 'holding' || s.state === 'downloading';
@@ -577,10 +694,11 @@
         badge.className = 'karaoke-badge';
         player.appendChild(badge);
       }
+      const what = engine.model === 'demucs' ? 'โมเดลแยกเครื่องดนตรี' : 'โมเดลตัดเสียงร้อง';
       badge.textContent =
         s.state === 'downloading'
-          ? `🎤 กำลังดาวน์โหลดโมเดล AI ${Math.round(s.progress * 100)}%`
-          : '🎤 รอ AI ตัดเสียงร้องสักครู่…';
+          ? `🎤 กำลังดาวน์โหลด${what} ${Math.round(s.progress * 100)}%`
+          : '🎤 รอ AI ตัดเสียงสักครู่…';
     } else if (badge) {
       badge.remove();
       badge = null;
@@ -589,10 +707,12 @@
 
   // ======================= settings & messaging =======================
 
-  function applySettings() {
-    if (settings.enabled) {
+  // wasOn: audio is only forwarded to the engine while on, so turning on
+  // replays what YouTube has buffered; switching stems while on doesn't need to.
+  function applySettings(wasOn = false) {
+    if (isOn()) {
       ensureEngine();
-      if (port) replayActive();
+      if (port && !wasOn) replayActive();
     } else if (heldByUs) {
       heldByUs = false;
       video?.play().catch(() => {});
@@ -601,27 +721,41 @@
     tick();
   }
 
-  chrome.storage.local.get(DEFAULTS, (stored) => {
-    settings = { ...DEFAULTS, ...stored };
+  chrome.storage.local.get(null, (stored) => {
+    // v0.3 had a single "enabled" switch, which meant removing vocals.
+    if ('enabled' in stored && !('removeVocals' in stored)) {
+      stored.removeVocals = !!stored.enabled;
+      chrome.storage.local.set({ removeVocals: stored.removeVocals });
+      chrome.storage.local.remove('enabled');
+    }
+    settings = { ...DEFAULTS };
+    for (const key of Object.keys(DEFAULTS)) if (key in stored) settings[key] = stored[key];
     applySettings();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    const prevEnabled = settings.enabled;
+    const prevEnabled = isOn();
     for (const [key, { newValue }] of Object.entries(changes)) {
-      if (key in DEFAULTS) settings[key] = newValue;
+      if (key in DEFAULTS) settings[key] = newValue ?? DEFAULTS[key];
     }
-    if (settings.enabled !== prevEnabled || 'hold' in changes) applySettings();
+    if (STEM_KEYS.some((k) => k in changes)) {
+      // A different stem selection: earlier blocks no longer apply.
+      configId++;
+      blocks.clear();
+      stopStems();
+    }
+    if (isOn() !== prevEnabled || 'hold' in changes || STEM_KEYS.some((k) => k in changes)) applySettings(prevEnabled);
     else tick();
   });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'karaoke:status') {
-      sendResponse({ ...currentStatus(), backend: engine.backend, realtime });
+      sendResponse({ ...currentStatus(), backend: engine.backend, models: engine.models || [], realtime });
     }
   });
 
   document.addEventListener('yt-navigate-finish', () => tick());
+  document.addEventListener('visibilitychange', () => tick());
   setInterval(tick, TICK_MS);
 })();

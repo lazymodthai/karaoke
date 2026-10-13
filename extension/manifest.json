@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube Karaoke",
-  "version": "0.3.0",
-  "description": "ตัดเสียงร้องจากวิดีโอ YouTube ด้วย AI เพื่อร้องคาราโอเกะ",
+  "version": "0.4.0",
+  "description": "ตัดเสียงร้อง กีตาร์ กลอง เบส จากวิดีโอ YouTube ด้วย AI สำหรับร้องคาราโอเกะและซ้อมดนตรี",
   "permissions": [
     "storage"
   ],

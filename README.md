@@ -1,13 +1,22 @@
 # YouTube Karaoke (Chrome Extension)
 
-ตัดเสียงร้องจากวิดีโอ YouTube ด้วย AI (MDX-Net "Kim_Vocal_2") ที่รันในเบราว์เซอร์ผ่าน WebGPU
+ตัดเสียงร้อง / กีตาร์ / กลอง / เบส จากวิดีโอ YouTube ด้วย AI ที่รันในเบราว์เซอร์ผ่าน WebGPU (เลือกตัดพร้อมกันได้ ใช้เป็น backing track ซ้อมดนตรี)
+
+| ตัด | โมเดล | ขนาด |
+|---|---|---|
+| เสียงร้อง | MDX-Net "Kim_Vocal_2" (UVR) | ~67MB |
+| กีตาร์ / กลอง / เบส | [HT-Demucs 6 stems](https://huggingface.co/StemSplitio/htdemucs-6s-onnx) (MIT) | ~136MB |
+
+ตัดเสียงร้องอย่างเดียวใช้ Kim_Vocal_2 แต่ถ้าเลือกเครื่องดนตรีแม้แต่ชิ้นเดียว จะใช้ Demucs 6 stems ทำทั้งหมด (รวมเสียงร้องด้วย) ใช้ทีละโมเดลเท่านั้น
+
+แทร็กที่เล่น = เสียงต้นฉบับ − stem ที่เลือกตัด (ส่วนอื่นจึงคงเดิมทุกอย่าง)
 
 ## ติดตั้ง (โหมดนักพัฒนา)
 1. `npm install` (จะคัดลอก onnxruntime-web ไปไว้ที่ `extension/vendor/ort/` ให้อัตโนมัติ)
 2. เปิด `chrome://extensions` → เปิด **Developer mode** → **Load unpacked** → เลือกโฟลเดอร์ `extension/`
 3. เปิด (หรือรีโหลด) หน้า YouTube แล้วกดปุ่มไมค์บนแถบควบคุมวิดีโอ หรือเปิดจาก popup ของส่วนขยาย
 
-ครั้งแรกจะดาวน์โหลดโมเดล (~67MB) จาก Hugging Face แล้วเก็บไว้ใน Cache Storage ของส่วนขยาย
+ครั้งแรกที่ใช้แต่ละโมเดลจะดาวน์โหลดจาก Hugging Face แล้วเก็บไว้ใน Cache Storage ของส่วนขยาย
 
 ## การทำงาน
 ```
@@ -35,6 +44,8 @@ YouTube player ──appendBuffer──▶ inject.js (MAIN world: คัดล�
 
 ## ทดสอบ
 - `npm test` — FFT, STFT/iSTFT, WebM parser, PCM store, ตัวแปลงเนื้อเพลง (json3/LRC/ชื่อคลิป/การเลือกบรรทัด)
+- `node test/onnx-fix-eval.js <htdemucs_6s.onnx> <mix.raw>` — ยืนยันว่าโมเดล 6 stems ที่แปลงค่า double เป็น float แล้ว โหลดใน onnxruntime-web ได้ และผลตรงกับต้นฉบับ
+- `node test/demucs-eval.js <htdemucs_6s.onnx> <voice.raw> <inst.raw>` — ทดสอบโมเดล 6 stems (ผลรวม stem, สัดส่วนพลังงาน, SDR เสียงร้อง)
 - `node test/model-eval.js <Kim_Vocal_2.onnx> <voice.raw> <inst.raw>` — วัดคุณภาพการแยกเสียงด้วยโมเดลจริง (f32le stereo 44.1kHz)
 
 ## ข้อจำกัด
