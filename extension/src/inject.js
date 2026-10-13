@@ -55,4 +55,79 @@
     }
     return appendBuffer.call(this, data);
   };
+
+  // ---------- lyrics: YouTube caption tracks ----------
+  // Caption URLs need a proof-of-origin token only the player can mint, so we
+  // ask the player to load a track and read the response it receives.
+
+  const isTimedtext = (url) => /\/api\/timedtext/.test(url);
+  const postTimedtext = (url, body) => {
+    try {
+      const q = new URL(url, location.href).searchParams;
+      post({ type: 'timedtext', videoId: q.get('v'), lang: q.get('lang'), kind: q.get('kind') || '', fmt: q.get('fmt'), body });
+    } catch {}
+  };
+
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (_method, url) {
+    if (isTimedtext(String(url))) {
+      this.addEventListener('load', () => {
+        if (typeof this.responseText === 'string' && this.responseText) postTimedtext(String(url), this.responseText);
+      });
+    }
+    return xhrOpen.apply(this, arguments);
+  };
+
+  const fetchOrig = window.fetch;
+  window.fetch = function (input) {
+    const promise = fetchOrig.apply(this, arguments);
+    const url = typeof input === 'string' ? input : input?.url;
+    if (url && isTimedtext(url)) {
+      promise.then((res) => res.clone().text().then((body) => body && postTimedtext(url, body))).catch(() => {});
+    }
+    return promise;
+  };
+
+  const STICKY_KEYS = ['yt-player-caption-sticky-language', 'yt-player-caption-persistence'];
+  const player = () => document.getElementById('movie_player');
+
+  function videoInfo() {
+    const pr = player()?.getPlayerResponse?.();
+    if (!pr?.videoDetails) return null;
+    const tracks = pr.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+    return {
+      videoId: pr.videoDetails.videoId,
+      title: pr.videoDetails.title,
+      author: pr.videoDetails.author,
+      duration: Number(pr.videoDetails.lengthSeconds),
+      tracks: tracks.map((t) => ({ lang: t.languageCode, kind: t.kind || '' })),
+    };
+  }
+
+  // Turns a caption track on just long enough for the player to fetch it,
+  // hiding YouTube's own caption overlay and restoring the user's CC state.
+  function loadCaptions(lang, kind) {
+    const p = player();
+    if (!p?.setOption) return;
+    const saved = STICKY_KEYS.map((k) => [k, localStorage.getItem(k)]);
+    const prevTrack = p.getOption?.('captions', 'track') || {};
+    document.documentElement.classList.add('karaoke-hide-cc');
+    p.loadModule?.('captions');
+    p.setOption('captions', 'track', kind ? { languageCode: lang, kind } : { languageCode: lang });
+    setTimeout(() => {
+      p.setOption('captions', 'track', prevTrack.languageCode ? prevTrack : {});
+      for (const [k, v] of saved) {
+        if (v == null) localStorage.removeItem(k);
+        else localStorage.setItem(k, v);
+      }
+      document.documentElement.classList.remove('karaoke-hide-cc');
+    }, 2500);
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data?.__karaokeCmd) return;
+    const { cmd } = e.data;
+    if (cmd === 'video-info') post({ type: 'video-info', info: videoInfo() });
+    else if (cmd === 'load-captions') loadCaptions(e.data.lang, e.data.kind);
+  });
 })();

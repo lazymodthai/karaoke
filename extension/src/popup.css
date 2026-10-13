@@ -34,3 +34,5 @@ input:disabled { opacity: 0.4; }
 .status.ok { color: #6fdc8c; }
 
 .hint { margin: 0 0 6px; color: var(--muted); font-size: 11px; }
+
+hr { border: 0; border-top: 1px solid #333; margin: 10px 0 12px; }

@@ -27,8 +27,22 @@
   <p id="status" class="status"></p>
   <p id="detail" class="hint"></p>
 
+  <hr>
+
+  <label class="row toggle">
+    <span>แสดงเนื้อเพลง</span>
+    <input type="checkbox" id="lyrics">
+  </label>
+
+  <label class="row slider">
+    <span>เลื่อนเวลาเนื้อเพลง <output id="offsetOut"></output></span>
+    <input type="range" id="lyricsOffset" min="-5" max="5" step="0.1">
+  </label>
+
+  <p id="lyricsStatus" class="hint"></p>
+
   <p class="hint">
-    ครั้งแรกจะดาวน์โหลดโมเดล AI (~67MB) แล้วเก็บไว้ในเครื่อง ปุ่มไมค์บนแถบควบคุมของ YouTube ใช้เปิด/ปิดได้เหมือนกัน
+    ครั้งแรกจะดาวน์โหลดโมเดล AI (~67MB) แล้วเก็บไว้ในเครื่อง ปุ่มไมค์และปุ่มเนื้อเพลงบนแถบควบคุมของ YouTube ใช้เปิด/ปิดได้เหมือนกัน
   </p>
 
   <script src="popup.js"></script>

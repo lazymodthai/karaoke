@@ -1,0 +1,350 @@
+// Lyrics parsing helpers shared by the lyrics content script (and unit tests).
+// A "line" is { start, end, text, words: [{ text, start, end }] } in seconds.
+// Lines with only line-level timing get a single word spanning the line.
+
+(function (root) {
+  const MAX_LINE_SEC = 10;
+
+  function cleanText(s) {
+    return s
+      .replace(/\[[^\]]*\]/g, ' ') // [Music], [เพลง], [Applause]
+      .replace(/[♪♫♬♩]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Sorts, clamps line/word ends to the next line, and drops empty lines.
+  function finalize(lines) {
+    const out = lines.filter((l) => l.text && Number.isFinite(l.start)).sort((a, b) => a.start - b.start);
+    for (let i = 0; i < out.length; i++) {
+      const line = out[i];
+      const next = out[i + 1];
+      let end = Number.isFinite(line.end) ? line.end : Infinity;
+      if (next) end = Math.min(end, next.start);
+      end = Math.min(end, line.start + MAX_LINE_SEC);
+      line.end = Math.max(end, line.start + 0.2);
+      if (!line.words || !line.words.length) line.words = [{ text: line.text, start: line.start, end: line.end }];
+      const words = line.words;
+      for (let j = 0; j < words.length; j++) {
+        const w = words[j];
+        w.start = Math.max(line.start, Math.min(w.start, line.end));
+        const wEnd = j + 1 < words.length ? words[j + 1].start : line.end;
+        w.end = Math.max(w.start + 0.05, Math.min(Number.isFinite(w.end) ? w.end : wEnd, wEnd));
+      }
+    }
+    return out;
+  }
+
+  // YouTube timedtext "json3" (manual captions: one text per event, may hold
+  // several rows separated by "\n"; auto captions: word segments with tOffsetMs).
+  function parseJson3(text) {
+    const data = typeof text === 'string' ? JSON.parse(text) : text;
+    const lines = [];
+    for (const ev of data.events || []) {
+      if (!ev.segs) continue;
+      const start = ev.tStartMs / 1000;
+      const end = (ev.tStartMs + (ev.dDurationMs || 0)) / 1000;
+      const timedWords = ev.segs.some((s) => 'tOffsetMs' in s) || ev.segs.length > 1;
+      if (timedWords) {
+        const words = ev.segs
+          .map((s) => ({ text: cleanText(s.utf8 || ''), start: start + (s.tOffsetMs || 0) / 1000 }))
+          .filter((w) => w.text);
+        if (!words.length) continue;
+        lines.push({ start: words[0].start, end, text: words.map((w) => w.text).join(' '), words });
+        continue;
+      }
+      // Manual captions: split multi-row events, sharing time by text length.
+      const rows = (ev.segs[0].utf8 || '').split('\n').map(cleanText).filter(Boolean);
+      const total = rows.reduce((n, r) => n + r.length, 0);
+      let t = start;
+      for (const row of rows) {
+        const dur = rows.length > 1 && end > start ? ((end - start) * row.length) / total : end - start;
+        lines.push({ start: t, end: t + dur, text: row });
+        t += dur;
+      }
+    }
+    return finalize(lines);
+  }
+
+  const TAG = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
+  const WORD_TAG = /<(\d+):(\d+(?:\.\d+)?)>/g;
+  const toSec = (m, s) => Number(m) * 60 + Number(s);
+
+  // LRC with optional "enhanced" per-word <mm:ss.xx> tags.
+  function parseLrc(text) {
+    const lines = [];
+    for (const raw of text.split(/\r?\n/)) {
+      const stamps = [...raw.matchAll(TAG)].map((m) => toSec(m[1], m[2]));
+      if (!stamps.length) continue;
+      const body = raw.replace(TAG, '');
+      const wordMatches = [...body.matchAll(WORD_TAG)];
+      for (const start of stamps) {
+        let words;
+        if (wordMatches.length) {
+          words = [];
+          const parts = body.split(WORD_TAG); // [pre, m, s, text, m, s, text, ...]
+          for (let i = 1; i + 2 < parts.length; i += 3) {
+            const w = cleanText(parts[i + 2]);
+            if (w) words.push({ text: w, start: start + (toSec(parts[i], parts[i + 1]) - stamps[0]) });
+          }
+        }
+        const plain = cleanText(body.replace(WORD_TAG, ''));
+        lines.push({ start, end: Infinity, text: plain, words });
+      }
+    }
+    return finalize(lines);
+  }
+
+  // "Artist - Song (Official MV) [4K] | Album" -> { artist, track }
+  function parseTitle(title, author = '') {
+    let t = title
+      .replace(/[([【「『][^)\]】」』]*[)\]】」』]/g, ' ')
+      .split(/\s*[|｜]/)[0]
+      .replace(/\s(feat\.?|ft\.?)\s.*$/i, '')
+      .replace(/\b(official|music video|lyric video|lyrics?|mv|m\/v|audio|visualizer)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const channel = author.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').replace(/\bofficial\b/gi, '').trim();
+    const dash = t.split(/\s[-–—]\s/);
+    if (dash.length >= 2) return { artist: dash[0].trim(), track: dash.slice(1).join(' - ').trim() };
+    return { artist: channel, track: t };
+  }
+
+  function similarity(a, b) {
+    const norm = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const x = norm(a);
+    const y = norm(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+    if (x.includes(y) || y.includes(x)) return 0.8;
+    return 0;
+  }
+
+  // Picks the best synced LRCLIB result for a video, or null.
+  function pickLrclib(results, { artist, track, duration }) {
+    let best = null;
+    for (const r of results || []) {
+      if (!r.syncedLyrics || r.instrumental) continue;
+      const dDiff = Number.isFinite(duration) && r.duration ? Math.abs(r.duration - duration) : 0;
+      if (dDiff > 60) continue; // music videos run long, but not by minutes
+      const score = 2 * similarity(r.trackName, track) + similarity(r.artistName, artist) - dDiff / 30;
+      if (similarity(r.trackName, track) === 0) continue;
+      if (!best || score > best.score) best = { score, result: r };
+    }
+    return best ? best.result : null;
+  }
+
+  // Where the highlight is within a line at time t: { word, frac } (word -1 = none).
+  function progressAt(line, t) {
+    if (t < line.start) return { word: -1, frac: 0 };
+    const words = line.words;
+    for (let i = words.length - 1; i >= 0; i--) {
+      const w = words[i];
+      if (t >= w.start) return { word: i, frac: Math.min(1, (t - w.start) / (w.end - w.start)) };
+    }
+    return { word: -1, frac: 0 };
+  }
+
+  function currentLineIndex(lines, t) {
+    let lo = 0;
+    let hi = lines.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (lines[mid].start <= t) {
+        ans = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return ans;
+  }
+
+  // Index of the first of the two lines to show at t, or null to hide.
+  function visiblePair(lines, t, showBefore = 4, gapHide = 6) {
+    const c = currentLineIndex(lines, t);
+    if (c < 0) return lines[0].start - t <= showBefore ? 0 : null;
+    const cur = lines[c];
+    const next = lines[c + 1];
+    if (!next) return t <= cur.end + 3 ? c : null;
+    // Long instrumental gap: clear the screen until shortly before the next line.
+    if (next.start - cur.end > gapHide && t > cur.end + 1 && next.start - t > showBefore) return null;
+    return c;
+  }
+
+  // ---------- aligning lyrics to auto-captions ----------
+  // Lyrics databases are timed for the album version; music videos add intros
+  // and scenes. Auto-captions are timed to the actual video (per word) but
+  // misheard. Aligning the two character sequences gives correct text with
+  // video timing.
+
+  // Characters compared during alignment: no spaces/punctuation, and Thai tone
+  // marks dropped since speech recognition often gets them wrong.
+  function matchChars(text) {
+    const out = [];
+    const chars = [...text.normalize('NFC').toLowerCase()];
+    chars.forEach((c, pos) => {
+      if (/[\s\p{P}\p{S}็-์ๆ]/u.test(c)) return;
+      out.push({ c, pos });
+    });
+    return out;
+  }
+
+  const MATCH = 2;
+  const MISMATCH = -1;
+  const GAP_LYRIC = -1; // lyric char with no caption counterpart
+  const GAP_CAPTION = -0.4; // caption char not in the lyrics (dialogue, noise)
+
+  // Returns lyrics retimed to the captions' clock, or null if they don't match.
+  function alignToCaptions(lyrics, captions) {
+    const A = [];
+    lyrics.forEach((line, li) => {
+      for (const { c, pos } of matchChars(line.text)) A.push({ c, line: li, pos });
+    });
+    const B = [];
+    captions.forEach((line) =>
+      line.words.forEach((w) => {
+        const cs = matchChars(w.text);
+        cs.forEach(({ c }, k) => B.push({ c, t: w.start + ((w.end - w.start) * k) / cs.length, wStart: w.start, wEnd: w.end, word: B.length - k }));
+      }),
+    );
+    const n = A.length;
+    const m = B.length;
+    if (n < 10 || m < 10) return null;
+
+    // Semi-global alignment: captions may have unmatched text at both ends.
+    const W = m + 1;
+    const H = new Float32Array((n + 1) * W);
+    const dir = new Uint8Array((n + 1) * W); // 1 diag, 2 up (skip lyric), 3 left (skip caption)
+    for (let i = 1; i <= n; i++) {
+      H[i * W] = i * GAP_LYRIC;
+      dir[i * W] = 2;
+    }
+    for (let i = 1; i <= n; i++) {
+      const ai = A[i - 1].c;
+      for (let j = 1; j <= m; j++) {
+        const diag = H[(i - 1) * W + j - 1] + (ai === B[j - 1].c ? MATCH : MISMATCH);
+        const up = H[(i - 1) * W + j] + GAP_LYRIC;
+        const left = H[i * W + j - 1] + GAP_CAPTION;
+        let best = diag;
+        let d = 1;
+        if (up > best) {
+          best = up;
+          d = 2;
+        }
+        if (left > best) {
+          best = left;
+          d = 3;
+        }
+        H[i * W + j] = best;
+        dir[i * W + j] = d;
+      }
+    }
+    let j = 0;
+    for (let k = 1; k <= m; k++) if (H[n * W + k] > H[n * W + j]) j = k;
+    let i = n;
+    const pairs = new Array(n).fill(-1); // lyric char -> caption char (exact matches only)
+    while (i > 0 && j > 0) {
+      const d = dir[i * W + j];
+      if (d === 1) {
+        if (A[i - 1].c === B[j - 1].c) pairs[i - 1] = j - 1;
+        i--;
+        j--;
+      } else if (d === 2) i--;
+      else j--;
+    }
+
+    // Per line: matched characters, in order.
+    const perLine = lyrics.map(() => []);
+    pairs.forEach((bj, ai) => {
+      if (bj >= 0) perLine[A[ai].line].push({ pos: A[ai].pos, b: B[bj] });
+    });
+    const totals = lyrics.map(() => 0);
+    for (const a of A) totals[a.line]++;
+
+    // Anchor lines that matched well and keep the anchors increasing.
+    const anchors = [];
+    lyrics.forEach((_, li) => {
+      const hits = perLine[li];
+      if (hits.length < 3 || hits.length / totals[li] < 0.4) return;
+      const start = hits[0].b.wStart;
+      if (anchors.length && start <= anchors[anchors.length - 1].start) return;
+      anchors.push({ li, start, end: Math.max(...hits.map((h) => h.b.wEnd)) });
+    });
+    if (anchors.length < Math.max(3, lyrics.length * 0.3)) return null;
+
+    // Unanchored lines: map their original time between the nearest anchors.
+    const mapTime = (t) => {
+      let k = 0;
+      while (k < anchors.length && lyrics[anchors[k].li].start <= t) k++;
+      const a = anchors[Math.max(0, k - 1)];
+      const b = anchors[Math.min(anchors.length - 1, k)];
+      const ta = lyrics[a.li].start;
+      const tb = lyrics[b.li].start;
+      if (a === b || tb === ta) return a.start + (t - ta);
+      return a.start + ((t - ta) * (b.start - a.start)) / (tb - ta);
+    };
+    const anchorOf = new Map(anchors.map((a) => [a.li, a]));
+
+    const out = lyrics.map((line, li) => {
+      const anchor = anchorOf.get(li);
+      if (!anchor) {
+        const start = mapTime(line.start);
+        return { start, end: start + (line.end - line.start), text: line.text };
+      }
+      // Split the line where the matched caption word changes: each piece is
+      // highlighted from the time that word was sung.
+      const chars = [...line.text];
+      const hits = perLine[li];
+      const words = [];
+      let from = 0;
+      let prevWord = -1;
+      for (const h of hits) {
+        if (h.b.word === prevWord) continue;
+        if (words.length) {
+          words[words.length - 1].text = chars.slice(from, h.pos).join('');
+          from = h.pos;
+        }
+        if (words.length && h.b.wStart <= words[words.length - 1].start) {
+          prevWord = h.b.word;
+          continue; // keep times increasing; merge into the previous piece
+        }
+        words.push({ text: '', start: h.b.wStart, end: h.b.wEnd });
+        prevWord = h.b.word;
+      }
+      words[words.length - 1].text = chars.slice(from).join('');
+      // Fold whitespace-only pieces into the previous piece so text is kept.
+      const merged = [];
+      for (const w of words) {
+        if (!w.text.trim() && merged.length) merged[merged.length - 1].text += w.text;
+        else merged.push(w);
+      }
+      // joined: pieces already carry their spacing; render without separators.
+      return { start: anchor.start, end: anchor.end + 0.3, text: line.text, words: merged, joined: true };
+    });
+    return finalize(out);
+  }
+
+  // The language a video is sung in: the auto-caption language when present,
+  // else a guess from the title's script.
+  function spokenLanguage(tracks, title) {
+    const asr = tracks.find((t) => t.kind === 'asr');
+    if (asr) return asr.lang.split('-')[0];
+    if (/[฀-๿]/.test(title)) return 'th';
+    if (/[가-힯]/.test(title)) return 'ko';
+    if (/[぀-ヿ]/.test(title)) return 'ja';
+    if (/[一-鿿]/.test(title)) return 'zh';
+    return null;
+  }
+
+  root.KaraokeLyrics = {
+    parseJson3,
+    parseLrc,
+    parseTitle,
+    pickLrclib,
+    progressAt,
+    visiblePair,
+    alignToCaptions,
+    spokenLanguage,
+    cleanText,
+  };
+})(globalThis);

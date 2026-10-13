@@ -43,6 +43,7 @@
   let chain = []; // scheduled blocks: { k, srcs, ctxStart, mediaStart, ctxEnd }
   const blocks = new Map(); // k -> { k, start, duration, inst, voc, bufs }
   let stemsOn = false;
+  let lastMissingBlock = -1; // only log a missing block once
 
   // ---------- hold ----------
   let heldByUs = false;
@@ -265,6 +266,7 @@
   }
 
   function setMix(on, g) {
+    if (on !== stemsOn) log(on ? 'stems ON' : 'stems OFF', `t=${video.currentTime.toFixed(2)}s`);
     stemsOn = on;
     const now = ctx.currentTime;
     const vol = video.muted ? 0 : video.volume;
@@ -275,25 +277,37 @@
 
   function blockAt(t) {
     const b = blocks.get(Math.floor(t / BLOCK_SEC));
-    return b && t < b.start + b.duration - 0.03 ? b : null;
+    return b && t >= b.start && t < b.start + b.duration ? b : null;
   }
 
-  // Keeps the scheduled stems aligned with video.currentTime.
+  function log(...args) {
+    console.debug('[YouTube Karaoke]', ...args);
+  }
+
+  // Keeps the scheduled stems aligned with video.currentTime. Returns whether
+  // separated audio is (or is about to be) playing at t.
   function syncStems(t) {
-    const b = blockAt(t);
-    if (!b) {
-      stopStems();
-      return false;
-    }
     const now = ctx.currentTime;
     chain = chain.filter((c) => c.ctxEnd > now);
     const head = chain[0];
-    const pos = head ? head.mediaStart + (now - head.ctxStart) : NaN;
-    if (!head || Math.abs(pos - t) > DRIFT_SEC) {
+    const drift = head ? head.mediaStart + (now - head.ctxStart) - t : NaN;
+
+    if (!head || Math.abs(drift) > DRIFT_SEC) {
       stopStems();
       const lead = 0.03;
+      const b = blockAt(t + lead);
+      if (!b) {
+        const k = Math.floor((t + lead) / BLOCK_SEC);
+        if (k !== lastMissingBlock) log(`no separated block at ${t.toFixed(2)}s -> original audio`);
+        lastMissingBlock = k;
+        return false;
+      }
+      lastMissingBlock = -1;
+      log(head ? `resync at ${t.toFixed(2)}s (drift ${(drift * 1000).toFixed(0)} ms)` : `start stems at ${t.toFixed(2)}s (block ${b.k})`);
       schedule(b, now + lead, t + lead - b.start);
     }
+
+    // Queue the next block back-to-back so block seams need no tick.
     const last = chain[chain.length - 1];
     if (last.ctxEnd - now < 2) {
       const next = blocks.get(last.k + 1);

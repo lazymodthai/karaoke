@@ -1,31 +1,54 @@
 {
   "manifest_version": 3,
   "name": "YouTube Karaoke",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "ตัดเสียงร้องจากวิดีโอ YouTube ด้วย AI เพื่อร้องคาราโอเกะ",
-  "permissions": ["storage"],
-  "host_permissions": ["https://huggingface.co/*", "https://*.hf.co/*"],
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://huggingface.co/*",
+    "https://*.hf.co/*"
+  ],
   "action": {
     "default_title": "YouTube Karaoke",
     "default_popup": "src/popup.html"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
-      "js": ["src/inject.js"],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://music.youtube.com/*"
+      ],
+      "js": [
+        "src/inject.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
-      "js": ["src/content.js"],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://music.youtube.com/*"
+      ],
+      "js": [
+        "src/lyrics/parse.js",
+        "src/lyrics.js",
+        "src/content.js"
+      ],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/engine/*", "vendor/ort/*"],
-      "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"]
+      "resources": [
+        "src/engine/*",
+        "vendor/ort/*"
+      ],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://music.youtube.com/*"
+      ]
     }
   ],
   "content_security_policy": {
