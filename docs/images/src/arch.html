@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- Source for docs/images/arch.png. Render: "Google Chrome" --headless=new --hide-scrollbars --force-device-scale-factor=2 --window-size=1200,470 --screenshot=arch.png arch.html -->
+<html lang="th"><head><meta charset="utf-8"><style>
+body { margin: 0; width: 1200px; height: 470px; background: #fff; font-family: "Sukhumvit Set", "Noto Sans Thai", system-ui, sans-serif; color: #1d1d1f; position: relative; overflow: hidden; }
+.zone { position: absolute; border-radius: 16px; padding: 14px 18px; box-sizing: border-box; }
+.zone h3 { margin: 0 0 4px; font-size: 15px; letter-spacing: .3px; color: #6b6b6b; }
+.yt { left: 24px; top: 24px; width: 560px; height: 422px; background: #fff3f2; border: 1.5px solid #ffc9c5; }
+.ext { left: 616px; top: 24px; width: 560px; height: 422px; background: #eef7ff; border: 1.5px solid #c3e3ff; }
+.box { position: absolute; background: #fff; border: 1.5px solid #d4d4d8; border-radius: 12px; padding: 12px 14px; box-sizing: border-box; font-size: 15px; line-height: 1.35; }
+.box b { display: block; font-size: 17px; margin-bottom: 3px; font-family: ui-monospace, Menlo, monospace; }
+.box span { color: #555; }
+.hl { border-color: #ff4e45; } .hl2 { border-color: #3a9bff; }
+svg { position: absolute; left: 0; top: 0; }
+.lbl { position: absolute; font-size: 13px; color: #444; background: #fff; padding: 1px 6px; border-radius: 6px; border: 1px solid #e3e3e3; }
+</style></head><body>
+<div class="zone yt"><h3>หน้า YouTube</h3></div>
+<div class="zone ext"><h3>เครื่องประมวลผล AI (iframe ของส่วนขยาย)</h3></div>
+
+<div class="box" style="left:48px; top:70px; width:240px;"><b>YouTube player</b><span>ดาวน์โหลดเสียง WebM/Opus ล่วงหน้าตามปกติ</span></div>
+<div class="box hl" style="left:320px; top:70px; width:240px;"><b>inject.js</b><span>คัดลอกไบต์เสียงจาก appendBuffer (MAIN world)</span></div>
+<div class="box hl" style="left:48px; top:270px; width:512px; height:150px;"><b>content.js</b><span>
+• เล่นแทร็กที่ตัดแล้วตรงกับ <code>video.currentTime</code><br>
+• ปิดเสียงต้นฉบับเฉพาะช่วงที่ AI ทำเสร็จ<br>
+• หยุดวิดีโอรอ AI · ผสมเสียงร้องไกด์ · ปุ่มบน player<br>
+• lyrics.js แสดงเนื้อเพลงแบบตู้คาราโอเกะ</span></div>
+
+<div class="box hl2" style="left:640px; top:70px; width:240px;"><b>webm.js</b><span>แยก init / cluster แล้ว decodeAudioData</span></div>
+<div class="box hl2" style="left:912px; top:70px; width:240px;"><b>pcm-store.js</b><span>เก็บเสียงเป็นบล็อก ~5.75 วินาที</span></div>
+<div class="box hl2" style="left:640px; top:270px; width:512px; height:150px;"><b>mdx.js / demucs.js</b><span>
+• STFT → โมเดล ONNX → iSTFT<br>
+• onnxruntime-web บน WebGPU (สำรองด้วย WASM)<br>
+• โมเดลดาวน์โหลดจาก Hugging Face ครั้งแรก แล้วเก็บใน Cache Storage<br>
+• แทร็กที่เล่น = ต้นฉบับ − stem ที่เลือก</span></div>
+
+<svg width="1200" height="470"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#333"/></marker></defs>
+<g stroke="#333" stroke-width="2" fill="none" marker-end="url(#a)">
+  <path d="M288 110H318"/>
+  <path d="M440 152V266"/>
+  <path d="M560 300H600V110H636"/>
+  <path d="M880 110H908"/>
+  <path d="M1032 152V266"/>
+  <path d="M636 380H564"/>
+</g></svg>
+<div class="lbl" style="left:448px; top:198px;">postMessage</div>
+<div class="lbl" style="left:556px; top:196px;">MessagePort</div>
+<div class="lbl" style="left:560px; top:392px;">บล็อกที่ตัดแล้ว</div>
+</body></html>

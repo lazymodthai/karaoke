@@ -1,6 +1,35 @@
+<p align="center"><img src="docs/images/banner.png" alt="YouTube Karaoke" width="100%"></p>
+
+<p align="center">
+  <a href="https://github.com/lazymodthai/karaoke/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/lazymodthai/karaoke?label=%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94&color=ff4e45"></a>
+  <img alt="Chrome MV3" src="https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white">
+  <img alt="WebGPU" src="https://img.shields.io/badge/AI-WebGPU%20%C2%B7%20on--device-6fdc8c">
+</p>
+
 # YouTube Karaoke (Chrome Extension)
 
 ตัดเสียงร้อง / กีตาร์ / กลอง / เบส จากวิดีโอ YouTube ด้วย AI ที่รันในเบราว์เซอร์ผ่าน WebGPU (เลือกตัดพร้อมกันได้ ใช้เป็น backing track ซ้อมดนตรี)
+เสียงไม่ถูกส่งออกจากเครื่อง ([นโยบายความเป็นส่วนตัว](PRIVACY.md))
+
+<p align="center"><img src="docs/images/player.png" alt="ปุ่มตัดเสียงบนแถบควบคุมของ YouTube และเนื้อเพลงแบบตู้คาราโอเกะ" width="100%"></p>
+<p align="center"><sub>ภาพตัวอย่าง: ปุ่มร้อง / กีตาร์ / กลอง / เบส และปุ่มเนื้อเพลงบนแถบควบคุมของ YouTube (เสียงร้องกำลังถูกตัด) เนื้อเพลงสองบรรทัดพร้อมแถบสีวิ่งตามจังหวะ</sub></p>
+
+## ความสามารถ
+
+<table>
+<tr>
+<td width="300" valign="top"><img src="docs/images/popup.png" alt="หน้าต่าง popup ของส่วนขยาย" width="280"></td>
+<td valign="top">
+
+- **เลือกตัดได้หลายส่วนพร้อมกัน** ทั้งเสียงร้อง กีตาร์ กลอง และเบส จาก popup หรือจากปุ่มบน player
+- **เสียงร้องไกด์** ผสมเสียงร้องต้นฉบับกลับเข้าไปเบาๆ สำหรับคนที่ยังจำเนื้อไม่ได้
+- **หยุดวิดีโอรอ AI** ตอนเริ่มเพลงหรือกรอเวลา เพื่อไม่ให้ได้ยินเสียงต้นฉบับหลุดมา
+- **เนื้อเพลงแบบตู้คาราโอเกะ** จากคำบรรยายของคลิป, LRCLIB หรือคำบรรยายอัตโนมัติ จัดจังหวะตามเสียงร้องให้เอง
+- **ประมวลผลในเครื่อง** ด้วย WebGPU ไม่ต้องสมัครบัญชีหรือใช้เซิร์ฟเวอร์ (popup บอกความเร็วเทียบกับเวลาจริงให้ดู)
+
+</td>
+</tr>
+</table>
 
 | ตัด | โมเดล | ขนาด |
 |---|---|---|
@@ -12,8 +41,11 @@
 แทร็กที่เล่น = เสียงต้นฉบับ − stem ที่เลือกตัด (ส่วนอื่นจึงคงเดิมทุกอย่าง)
 
 ## ติดตั้ง
-ดาวน์โหลดไฟล์ `.zip` จาก [Releases](https://github.com/lazymodthai/karaoke/releases/latest) แล้วทำตาม [docs/INSTALL.md](docs/INSTALL.md)
-(มีทั้งแบบ Load unpacked, Chrome Web Store และติดตั้งไฟล์ `.crx` ผ่าน policy) วิธีปล่อยเวอร์ชันใหม่ดูที่ [docs/RELEASING.md](docs/RELEASING.md)
+1. ดาวน์โหลด `youtube-karaoke-<เวอร์ชัน>.zip` จาก [Releases](https://github.com/lazymodthai/karaoke/releases/latest) แล้วแตกไฟล์
+2. เปิด `chrome://extensions` → เปิด **Developer mode** → **Load unpacked** → เลือกโฟลเดอร์ที่แตกออกมา
+3. เปิด (หรือรีโหลด) หน้า YouTube แล้วกดปุ่มไมค์บนแถบควบคุมวิดีโอ
+
+วิธีอื่น (Chrome Web Store, ไฟล์ `.crx` ผ่าน policy) และวิธีอัปเดตดูที่ [docs/INSTALL.md](docs/INSTALL.md) · วิธีปล่อยเวอร์ชันใหม่ดูที่ [docs/RELEASING.md](docs/RELEASING.md)
 
 ## ติดตั้งจากซอร์สโค้ด (โหมดนักพัฒนา)
 1. `npm install` (จะคัดลอก onnxruntime-web ไปไว้ที่ `extension/vendor/ort/` ให้อัตโนมัติ)
@@ -23,15 +55,8 @@
 ครั้งแรกที่ใช้แต่ละโมเดลจะดาวน์โหลดจาก Hugging Face แล้วเก็บไว้ใน Cache Storage ของส่วนขยาย
 
 ## การทำงาน
-```
-YouTube player ──appendBuffer──▶ inject.js (MAIN world: คัดลอกไบต์เสียง WebM/Opus)
-                                      │ window.postMessage
-                                      ▼
-                                 content.js ──MessagePort──▶ engine iframe (extension origin)
-                                      ▲                         webm.js     แยก init/cluster
-                                      │ บล็อกเสียงที่แยกแล้ว       decodeAudioData → pcm-store.js
-                                      └──────────────────────── mdx.js + onnxruntime-web (WebGPU)
-```
+![แผนภาพการทำงาน: inject.js ดักเสียง → content.js → เครื่องประมวลผล AI ใน iframe → ส่งบล็อกที่ตัดแล้วกลับมาเล่น](docs/images/arch.png)
+
 - ดึงเสียงจากบัฟเฟอร์ของ YouTube ล่วงหน้า (ก่อนเล่นจริง) แล้วประมวลผลทีละบล็อก ~5.75 วินาที
 - `content.js` เล่นเสียงดนตรีที่แยกแล้วให้ตรงกับ `video.currentTime` และปิดเสียงต้นฉบับเฉพาะช่วงที่ AI ทำเสร็จแล้ว
 - โหมด "หยุดวิดีโอรอ AI": ถ้าตำแหน่งที่กำลังเล่นยังไม่เสร็จ (เริ่มเพลง/กรอเวลา) จะหยุดวิดีโอรอแล้วเล่นต่อเอง
