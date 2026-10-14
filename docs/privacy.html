@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — YouTube Karaoke</title>
+<style>
+  body { max-width: 720px; margin: 0 auto; padding: 32px 16px; font: 16px/1.6 system-ui, -apple-system, "Sukhumvit Set", "Noto Sans Thai", sans-serif; color: #1d1d1f; background: #fff; }
+  h1 { font-size: 28px; } h2 { font-size: 20px; margin-top: 40px; }
+  code { background: #f2f2f2; padding: 1px 5px; border-radius: 4px; }
+  hr { border: 0; border-top: 1px solid #ddd; margin: 40px 0; }
+</style>
+</head>
+<body>
+<!-- Keep in sync with PRIVACY.md. Served by GitHub Pages for the Chrome Web Store listing. -->
+<h1>Privacy Policy — YouTube Karaoke</h1>
+<p><em>Last updated: 2026-10-14</em></p>
+<p>YouTube Karaoke does not collect, store on any server, sell or share personal data. It has no analytics, no accounts and no backend.</p>
+<p><strong>Processed on your device only.</strong> Audio from the YouTube video you are watching is separated into stems by an AI model that runs locally in your browser (WebGPU/WebAssembly). Audio never leaves your computer.</p>
+<p><strong>Stored on your device only.</strong></p>
+<ul>
+  <li>Settings (which stems to remove, volumes, lyrics on/off, timing offset) in <code>chrome.storage.local</code>.</li>
+  <li>Downloaded AI model files in the extension's Cache Storage.</li>
+</ul>
+<p><strong>Network requests the extension makes.</strong></p>
+<ul>
+  <li><code>huggingface.co</code> / <code>*.hf.co</code>: downloads the AI model files the first time you use each model. No user data is sent.</li>
+  <li><code>lrclib.net</code>: when lyrics are turned on, searches for lyrics using the video's title, channel name and duration. Nothing that identifies you is sent.</li>
+  <li><code>youtube.com</code>: lyrics may come from the video's own captions, which the YouTube player loads the same way as when you turn captions on yourself.</li>
+</ul>
+<p><strong>Removing data.</strong> Uninstalling the extension deletes all of its settings and cached models.</p>
+<p>Contact: open an issue at <a href="https://github.com/lazymodthai/karaoke/issues">github.com/lazymodthai/karaoke/issues</a></p>
+<hr>
+<h2 lang="th">นโยบายความเป็นส่วนตัว (ภาษาไทย)</h2>
+<div lang="th">
+<p>YouTube Karaoke ไม่เก็บ ไม่ขาย และไม่ส่งต่อข้อมูลส่วนบุคคล ไม่มีระบบวิเคราะห์ ไม่มีบัญชีผู้ใช้ และไม่มีเซิร์ฟเวอร์ของตัวเอง</p>
+<ul>
+  <li>เสียงจากวิดีโอถูกแยกด้วย AI ที่รันในเบราว์เซอร์ของคุณเท่านั้น ไม่ถูกส่งออกจากเครื่อง</li>
+  <li>การตั้งค่าเก็บใน <code>chrome.storage.local</code> และไฟล์โมเดลเก็บใน Cache Storage ของส่วนขยายบนเครื่องคุณ</li>
+  <li>ส่วนขยายเชื่อมต่อ Hugging Face (ดาวน์โหลดโมเดล), LRCLIB (ค้นเนื้อเพลงจากชื่อคลิป ชื่อช่อง และความยาวคลิป) และ YouTube (คำบรรยายของคลิป) เท่านั้น โดยไม่ส่งข้อมูลที่ระบุตัวคุณ</li>
+  <li>ถอนการติดตั้งแล้ว ข้อมูลทั้งหมดของส่วนขยายจะถูกลบ</li>
+</ul>
+</div>
+</body>
+</html>

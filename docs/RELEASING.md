@@ -24,7 +24,7 @@
 2. กด **New item** แล้วอัปโหลด `youtube-karaoke-<v>.zip` จาก Release ด้วยมือในครั้งแรก
 3. กรอกข้อมูลตามหัวข้อ "ข้อมูลสำหรับหน้า Store" ด้านล่าง
    - Visibility: เลือก **Unlisted** ถ้าต้องการแจกเฉพาะคนที่มีลิงก์ หรือ **Public**
-   - Privacy policy URL: `https://github.com/lazymodthai/karaoke/blob/main/PRIVACY.md`
+   - Privacy policy URL: `https://lazymodthai.github.io/karaoke/privacy.html`
    - Screenshots (1280×800): `docs/images/store/screenshot-1.png`, `screenshot-2.png`
    - Small promo tile (440×280): `docs/images/store/promo-tile.png`
    - Store icon: `extension/icons/icon-128.png`
