@@ -11,7 +11,11 @@
 
 แทร็กที่เล่น = เสียงต้นฉบับ − stem ที่เลือกตัด (ส่วนอื่นจึงคงเดิมทุกอย่าง)
 
-## ติดตั้ง (โหมดนักพัฒนา)
+## ติดตั้ง
+ดาวน์โหลดไฟล์ `.zip` จาก [Releases](https://github.com/lazymodthai/karaoke/releases/latest) แล้วทำตาม [docs/INSTALL.md](docs/INSTALL.md)
+(มีทั้งแบบ Load unpacked, Chrome Web Store และติดตั้งไฟล์ `.crx` ผ่าน policy) วิธีปล่อยเวอร์ชันใหม่ดูที่ [docs/RELEASING.md](docs/RELEASING.md)
+
+## ติดตั้งจากซอร์สโค้ด (โหมดนักพัฒนา)
 1. `npm install` (จะคัดลอก onnxruntime-web ไปไว้ที่ `extension/vendor/ort/` ให้อัตโนมัติ)
 2. เปิด `chrome://extensions` → เปิด **Developer mode** → **Load unpacked** → เลือกโฟลเดอร์ `extension/`
 3. เปิด (หรือรีโหลด) หน้า YouTube แล้วกดปุ่มไมค์บนแถบควบคุมวิดีโอ หรือเปิดจาก popup ของส่วนขยาย

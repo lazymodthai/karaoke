@@ -1,0 +1,102 @@
+# Push a tag matching the manifest version (e.g. `git tag v0.4.1 && git push --tags`)
+# to publish a GitHub release with the .zip, .crx and updates.xml, and — once the
+# CWS_* secrets exist — upload the same .zip to the Chrome Web Store.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Check tag matches manifest version
+        id: version
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match manifest version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+          CRX_KEY_PATH: ${{ runner.temp }}/key.pem
+        run: |
+          printf '%s\n' "$CRX_PRIVATE_KEY" > "$CRX_KEY_PATH"
+          npm run pack
+          rm "$CRX_KEY_PATH"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          id=$(cat dist/extension-id.txt)
+          cat > notes.md <<NOTES
+          ## ติดตั้ง
+          ดาวน์โหลด **youtube-karaoke-$VERSION.zip** → แตกไฟล์ → เปิด \`chrome://extensions\` → เปิด **Developer mode** → **Load unpacked** → เลือกโฟลเดอร์ที่แตกออกมา
+
+          วิธีอื่น (Chrome Web Store / ติดตั้งผ่าน policy ด้วยไฟล์ .crx) ดูที่ [docs/INSTALL.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/INSTALL.md)
+
+          Extension ID ของไฟล์ .crx: \`$id\`
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes \
+            dist/youtube-karaoke-$VERSION.zip dist/youtube-karaoke-$VERSION.crx dist/updates.xml
+
+  webstore:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+      PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+      CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+    steps:
+      - name: Skip unless Web Store secrets are set
+        id: check
+        run: |
+          if [ -z "$EXTENSION_ID" ] || [ -z "$REFRESH_TOKEN" ]; then
+            echo "::notice::CWS_* secrets not set — skipping Chrome Web Store upload"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.enabled
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.enabled
+        with:
+          node-version: 22
+
+      - name: Upload and submit for review
+        if: steps.check.outputs.enabled
+        run: npx --yes chrome-webstore-upload-cli@4.0.1 --source "dist/youtube-karaoke-${{ needs.release.outputs.version }}.zip"

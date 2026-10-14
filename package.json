@@ -5,12 +5,15 @@
   "scripts": {
     "vendor": "node scripts/vendor.js",
     "postinstall": "node scripts/vendor.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "icons": "node scripts/icons.js",
+    "pack": "node scripts/pack.js"
   },
   "dependencies": {
     "onnxruntime-web": "1.30.0"
   },
   "devDependencies": {
+    "crx3": "2.0.0",
     "onnxruntime-node": "1.30.0"
   }
 }
