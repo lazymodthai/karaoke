@@ -25,7 +25,10 @@
 3. กรอกข้อมูลตามหัวข้อ "ข้อมูลสำหรับหน้า Store" ด้านล่าง
    - Visibility: เลือก **Unlisted** ถ้าต้องการแจกเฉพาะคนที่มีลิงก์ หรือ **Public**
    - Privacy policy URL: `https://github.com/lazymodthai/karaoke/blob/main/PRIVACY.md`
-   - Screenshots: ต้องมีอย่างน้อย 1 รูป ขนาด 1280×800 หรือ 640×400 (เช่น หน้า YouTube ที่เปิด popup และเนื้อเพลง)
+   - Screenshots (1280×800): `docs/images/store/screenshot-1.png`, `screenshot-2.png`
+   - Small promo tile (440×280): `docs/images/store/promo-tile.png`
+   - Store icon: `extension/icons/icon-128.png`
+   - สร้างรูปใหม่ได้จาก `docs/images/src/store.html` (คำสั่งอยู่ในคอมเมนต์ด้านบนของไฟล์)
 4. กด **Submit for review**
 5. หลังจากนั้นสร้าง OAuth credentials ตาม [คู่มือนี้](https://github.com/fregante/chrome-webstore-upload-keys) แล้วตั้ง secret
    ```sh

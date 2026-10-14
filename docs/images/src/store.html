@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Source for docs/images/store/*.png (Chrome Web Store screenshots 1280x800 and promo tile 440x280).
+     Render each with ?s=1, ?s=2 or ?s=tile, e.g.:
+     "Google Chrome" --headless=new --hide-scrollbars --window-size=1280,800 --screenshot=screenshot-1.png "file://$PWD/store.html?s=1" -->
+<html lang="th"><head><meta charset="utf-8"><style>
+body { margin: 0; overflow: hidden; font-family: "Sukhumvit Set", "Noto Sans Thai", system-ui, sans-serif; color: #f1f1f1;
+  background: radial-gradient(circle at 90% 0%, rgba(255,78,69,.3), transparent 40%), radial-gradient(circle at 0% 100%, rgba(62,199,255,.2), transparent 45%), #141414; }
+.s { display: none; width: 1280px; height: 800px; box-sizing: border-box; }
+h2 { margin: 0; font-size: 40px; font-weight: 800; }
+p { margin: 8px 0 0; font-size: 22px; color: #cfcfcf; }
+#s1 { padding: 36px 64px; } #s1 img { display: block; width: 1040px; margin: 24px auto 0; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+#s2 { padding: 0 96px; align-items: center; gap: 72px; }
+#s2 img { width: 330px; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+#s2 ul { margin: 28px 0 0; padding: 0; list-style: none; font-size: 24px; line-height: 1.5; }
+#s2 li { margin-bottom: 14px; } #s2 li b { color: #ff6b63; }
+#tile { width: 440px; height: 280px; padding: 0 28px; align-items: center; gap: 22px; }
+#tile img { width: 96px; } #tile h2 { font-size: 32px; } #tile p { font-size: 16px; }
+</style></head><body>
+<div class="s" id="s1">
+  <h2>ร้องคาราโอเกะได้ทุกเพลงบน YouTube</h2>
+  <p>กดปุ่มบน player เพื่อตัดเสียงร้อง กีตาร์ กลอง หรือเบส พร้อมเนื้อเพลงที่วิ่งตามจังหวะ</p>
+  <img src="../player.png">
+</div>
+<div class="s" id="s2">
+  <img src="../popup.png">
+  <div>
+    <h2>AI ทำงานในเครื่องของคุณ</h2>
+    <p>ประมวลผลด้วย WebGPU เสียงไม่ถูกส่งออกจากเครื่อง</p>
+    <ul>
+      <li><b>เลือกตัดหลายส่วนพร้อมกัน</b> ใช้เป็น backing track ซ้อมดนตรี</li>
+      <li><b>เสียงร้องไกด์</b> ผสมเสียงร้องต้นฉบับกลับเข้าไปเบาๆ</li>
+      <li><b>หยุดวิดีโอรอ AI</b> ไม่ได้ยินเสียงต้นฉบับหลุดมา</li>
+      <li><b>เนื้อเพลงคาราโอเกะ</b> จัดจังหวะตามเสียงร้องอัตโนมัติ</li>
+    </ul>
+  </div>
+</div>
+<div class="s" id="tile">
+  <img src="../../../extension/icons/icon-128.png">
+  <div><h2>YouTube Karaoke</h2><p>ตัดเสียงร้องและดนตรีด้วย AI</p></div>
+</div>
+<script>
+  const id = { 1: 's1', 2: 's2', tile: 'tile' }[new URLSearchParams(location.search).get('s')] || 's1';
+  document.getElementById(id).style.display = id === 's1' ? 'block' : 'flex';
+</script>
+</body></html>
