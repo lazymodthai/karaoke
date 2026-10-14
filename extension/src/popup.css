@@ -55,3 +55,5 @@ select { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-r
 .stem .slash { display: none; }
 .stem[aria-pressed="true"] { border-color: var(--accent); background: #3a1f1e; }
 .stem[aria-pressed="true"] .slash { display: inline; }
+.donate { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
+.donate:hover { color: var(--fg); }
