@@ -55,6 +55,18 @@
 
   <hr>
 
+  <div class="row toggle">
+    <span>คีย์เพลง</span>
+    <div class="stepper">
+      <button id="keyDown" title="ลดคีย์ครึ่งเสียง" aria-label="ลดคีย์ครึ่งเสียง">−</button>
+      <output id="keyOut" aria-live="polite"></output>
+      <button id="keyUp" title="เพิ่มคีย์ครึ่งเสียง" aria-label="เพิ่มคีย์ครึ่งเสียง">+</button>
+    </div>
+  </div>
+  <p id="keyHint" class="hint"></p>
+
+  <hr>
+
   <label class="row toggle">
     <span>แสดงเนื้อเพลง</span>
     <input type="checkbox" id="lyrics">

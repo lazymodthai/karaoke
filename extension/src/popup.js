@@ -8,7 +8,9 @@ const DEFAULTS = {
   lyrics: false,
   lyricsOffset: 0,
   lyricsLang: 'th',
+  pitch: 0,
 };
+const PITCH_RANGE = 6;
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -24,6 +26,10 @@ const els = {
   lyricsLang: $('lyricsLang'),
   offsetOut: $('offsetOut'),
   lyricsStatus: $('lyricsStatus'),
+  keyDown: $('keyDown'),
+  keyUp: $('keyUp'),
+  keyOut: $('keyOut'),
+  keyHint: $('keyHint'),
 };
 
 const LYRICS_SOURCE = { cc: 'คำบรรยายของคลิป', lrclib: 'LRCLIB', asr: 'คำบรรยายอัตโนมัติ' };
@@ -44,6 +50,7 @@ const STATUS_TEXT = {
 };
 
 let tabId = null;
+let pitch = 0;
 
 function render(s) {
   const guide = Math.round((1 - s.strength) * 100);
@@ -59,6 +66,10 @@ function render(s) {
   els.offsetOut.textContent = off === 0 ? '0 วินาที' : `${off > 0 ? 'เร็วขึ้น' : 'ช้าลง'} ${Math.abs(off).toFixed(1)} วินาที`;
   els.lyricsOffset.disabled = !s.lyrics;
   els.lyricsLang.value = s.lyricsLang;
+  pitch = s.pitch;
+  els.keyOut.textContent = pitch === 0 ? 'คีย์เดิม' : `${pitch > 0 ? '+' : '−'}${Math.abs(pitch)}`;
+  els.keyDown.disabled = pitch <= -PITCH_RANGE;
+  els.keyUp.disabled = pitch >= PITCH_RANGE;
 }
 
 function setStatus(text, cls = '', detail = '') {
@@ -80,6 +91,11 @@ async function refreshStatus() {
     if (res.backend) detail.push(res.backend === 'webgpu' ? 'ประมวลผลด้วย GPU (WebGPU)' : 'ประมวลผลด้วย CPU (ช้ากว่า)');
     if (res.realtime) detail.push(`เร็วกว่าเวลาจริง ${res.realtime.toFixed(1)} เท่า`);
     setStatus(text, cls, detail.join(' · '));
+    els.keyHint.textContent = res.pitchError
+      ? `ปรับคีย์ไม่ได้: ${res.pitchError}`
+      : res.pitchNeedsGesture
+        ? 'คลิกที่หน้า YouTube หนึ่งครั้งเพื่อเริ่มปรับคีย์'
+        : '';
     const ly = await chrome.tabs.sendMessage(tabId, { type: 'karaoke:lyrics-status' });
     els.lyricsStatus.textContent =
       ly.phase === 'ready'
@@ -105,6 +121,9 @@ els.guide.addEventListener('input', () => save({ strength: 1 - els.guide.value /
 els.hold.addEventListener('change', () => save({ hold: els.hold.checked }));
 els.lyrics.addEventListener('change', () => save({ lyrics: els.lyrics.checked }));
 els.lyricsLang.addEventListener('change', () => save({ lyricsLang: els.lyricsLang.value }));
+els.keyDown.addEventListener('click', () => save({ pitch: Math.max(-PITCH_RANGE, pitch - 1) }));
+els.keyUp.addEventListener('click', () => save({ pitch: Math.min(PITCH_RANGE, pitch + 1) }));
+els.keyOut.addEventListener('click', () => save({ pitch: 0 }));
 els.lyricsOffset.addEventListener('input', () => save({ lyricsOffset: Number(els.lyricsOffset.value) }));
 
 (async () => {

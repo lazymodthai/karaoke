@@ -57,3 +57,11 @@ select { background: #2a2a2a; color: var(--fg); border: 1px solid #444; border-r
 .stem[aria-pressed="true"] .slash { display: inline; }
 .donate { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; text-decoration: none; }
 .donate:hover { color: var(--fg); }
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper button {
+  width: 26px; height: 26px; padding: 0; background: #2a2a2a; color: var(--fg); border: 1px solid #3a3a3a;
+  border-radius: 13px; font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+}
+.stepper button:hover:not(:disabled) { border-color: #666; }
+.stepper button:disabled { opacity: .4; cursor: default; }
+.stepper output { min-width: 52px; text-align: center; font-weight: 400; cursor: pointer; }

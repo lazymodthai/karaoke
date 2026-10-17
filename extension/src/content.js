@@ -10,7 +10,8 @@
 (() => {
   // remove*: which stems to take out (any on = karaoke on). strength: how much
   // of the separated vocals to take out (1 = all; less leaves a guide vocal).
-  const DEFAULTS = { removeVocals: false, removeGuitar: false, removeDrums: false, removeBass: false, strength: 1, hold: true };
+  // pitch: key change in semitones (works with or without karaoke).
+  const DEFAULTS = { removeVocals: false, removeGuitar: false, removeDrums: false, removeBass: false, strength: 1, hold: true, pitch: 0 };
   const STEM_KEYS = ['removeVocals', 'removeGuitar', 'removeDrums', 'removeBass'];
   const INJECT_TAG = '__karaokeInject';
   const SR = 44100;
@@ -42,12 +43,21 @@
   let needsGesture = false;
   const graphs = new Map(); // video -> { orig: GainNode }
   let stemBus = null;
+  let master = null; // everything we play -> (pitch shifter) -> speakers
   let instGain = null;
   let vocGain = null;
   let chain = []; // scheduled blocks: { k, srcs, ctxStart, mediaStart, ctxEnd }
   const blocks = new Map(); // k -> { k, start, duration, inst, voc, bufs }
   let stemsOn = false;
   let lastMissingBlock = -1; // only log a missing block once
+
+  // ---------- key change ----------
+  let pitchNode = null;
+  let pitchLoading = false;
+  let pitchError = null;
+  let pitchLatency = 0; // seconds the shifter delays its input
+  let pitchRouted = false;
+  let pitchRatio = 1;
 
   // ---------- hold ----------
   let heldByUs = false;
@@ -310,9 +320,11 @@
       stemBus = new GainNode(ctx, { gain: 0 });
       instGain = new GainNode(ctx, { gain: 1 });
       vocGain = new GainNode(ctx, { gain: 0 });
+      master = new GainNode(ctx);
       instGain.connect(stemBus);
       vocGain.connect(stemBus);
-      stemBus.connect(ctx.destination);
+      stemBus.connect(master);
+      master.connect(ctx.destination);
     }
     let g = graphs.get(v);
     if (!g) {
@@ -320,7 +332,7 @@
         const source = ctx.createMediaElementSource(v);
         const orig = new GainNode(ctx, { gain: 1 });
         source.connect(orig);
-        orig.connect(ctx.destination);
+        orig.connect(master);
         g = { orig };
         graphs.set(v, g);
         lastError = null;
@@ -331,6 +343,62 @@
       }
     }
     return g;
+  }
+
+  // ======================= key change =======================
+
+  function loadPitch() {
+    if (pitchNode || pitchLoading || pitchError) return;
+    pitchLoading = true;
+    ctx.audioWorklet
+      .addModule(chrome.runtime.getURL('src/audio/pitch-worklet.js'))
+      .then(() => {
+        const node = new AudioWorkletNode(ctx, 'karaoke-pitch', {
+          outputChannelCount: [2],
+          channelCount: 2,
+          channelCountMode: 'explicit',
+        });
+        node.port.onmessage = ({ data }) => {
+          if (data.latency != null) pitchLatency = data.latency;
+        };
+        node.connect(ctx.destination);
+        pitchNode = node;
+        pitchRatio = 1;
+        tick();
+      })
+      .catch((err) => {
+        pitchError = String(err?.message || err);
+        log('key change unavailable:', pitchError);
+      })
+      .finally(() => (pitchLoading = false));
+  }
+
+  // Routes everything through the shifter only while the key is changed, so
+  // the default path stays untouched (no added delay or processing).
+  function updatePitch() {
+    if (!master) return;
+    if (settings.pitch) loadPitch();
+    if (!pitchNode) return;
+    const ratio = 2 ** (settings.pitch / 12);
+    if (ratio !== pitchRatio) {
+      pitchRatio = ratio;
+      pitchNode.port.postMessage({ ratio });
+    }
+    const want = !!settings.pitch;
+    if (want === pitchRouted) return;
+    if (want) pitchNode.port.postMessage({ reset: true });
+    master.disconnect();
+    master.connect(want ? pitchNode : ctx.destination);
+    pitchRouted = want;
+    log(want ? `key ${settings.pitch > 0 ? '+' : ''}${settings.pitch}` : 'key back to original');
+    stopStems(); // the audio delay changed: reschedule the stems for it
+  }
+
+  // How far ahead of the picture audio must enter the graph to be heard in sync.
+  // The original audio can't be fed early (it comes from the <video> itself), so
+  // it stays pitchLatency late (~40 ms); it's muted wherever the stems play.
+  function audioLead() {
+    return pitchRouted ? pitchLatency : 0;
   }
 
   function buffersFor(b) {
@@ -395,6 +463,7 @@
   // separated audio is (or is about to be) playing at t.
   function syncStems(t) {
     const now = ctx.currentTime;
+    t += audioLead();
     chain = chain.filter((c) => c.ctxEnd > now);
     const head = chain[0];
     const drift = head ? head.mediaStart + (now - head.ctxStart) - t : NaN;
@@ -519,15 +588,19 @@
     }
 
     if (!isOn()) {
-      if (ctx && graphs.has(video)) {
+      // A key change still needs the video routed through our graph.
+      const g = settings.pitch ? ensureGraph(video) : ctx && graphs.get(video);
+      if (g) {
+        updatePitch();
         stopStems();
-        setMix(false, graphs.get(video));
+        setMix(false, g);
       }
       return updateUi();
     }
 
     const g = ensureGraph(video);
     if (!g) return updateUi();
+    updatePitch();
 
     updateHold(t);
     const playing = !video.paused && !video.seeking && !video.ended && video.playbackRate === 1;
@@ -751,7 +824,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'karaoke:status') {
-      sendResponse({ ...currentStatus(), backend: engine.backend, models: engine.models || [], realtime });
+      sendResponse({ ...currentStatus(), backend: engine.backend, models: engine.models || [], realtime, pitchError, pitchNeedsGesture: !!settings.pitch && !pitchRouted && needsGesture });
     }
   });
 

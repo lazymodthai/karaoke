@@ -53,6 +53,7 @@
     {
       "resources": [
         "src/engine/*",
+        "src/audio/*",
         "vendor/ort/*"
       ],
       "matches": [
