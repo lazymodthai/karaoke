@@ -105,8 +105,10 @@
       .replace(/\s+/g, ' ')
       .trim();
     const channel = author.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').replace(/\bofficial\b/gi, '').trim();
-    const dash = t.split(/\s[-–—]\s/);
-    if (dash.length >= 2) return { artist: dash[0].trim(), track: dash.slice(1).join(' - ').trim() };
+    const dash = t.split(/\s[-–—]\s|\s?[:：]\s/);
+    // Collaborations: search by the first artist ("A x B", "A & B", "A, B").
+    const lead = (s) => s.split(/\s+(?:x|×|&)\s+|\s*,\s*/i)[0].trim();
+    if (dash.length >= 2) return { artist: lead(dash[0]), track: dash.slice(1).join(' - ').trim() };
     return { artist: channel, track: t };
   }
 
@@ -337,8 +339,11 @@
   // a cut chorus), found with a Viterbi pass over a grid of offsets.
 
   const OFFSET_STEP = 0.1;
-  const DRIFT_BINS = 3; // free drift between consecutive lines: ±0.3 s
-  const JUMP_COST = 0.8;
+  const DRIFT_BINS = 3; // cheap drift between consecutive lines: ±0.3 s
+  const DRIFT_COST = 0.02; // per bin, so lines with no audio yet keep their offset
+  const JUMP_COST = 0.8; // offset grows: a scene inserted into the song
+  const CUT_COST = 1.6; // offset shrinks: part of the song cut, rarer in videos
+  const MIN_LINE_GAP = 0.3;
 
   function alignToVocals(lines, env, frameSec, { minOffset = -20, maxOffset = 180 } = {}) {
     const n = env.length;
@@ -376,30 +381,46 @@
       if (inside == null) return 0;
       return 0.5 * inside + 0.5 * (onset(s) ?? 0);
     };
+    // Path score: relative to a random placement, so that a line with no audio
+    // yet (score 0) isn't pulled back into the analysed part of the song.
+    const baseline = 0.5 * (cumA[n] / Math.max(1, cumK[n]));
+    const gain = (line, o) => {
+      const s = line.start + o;
+      return activity(s, s + Math.min(line.end - line.start, 4)) == null ? 0 : score(line, o) - baseline;
+    };
 
     const S = Math.round((maxOffset - minOffset) / OFFSET_STEP) + 1;
     const offsetAt = (k) => minOffset + k * OFFSET_STEP;
     let prev = new Float32Array(S);
-    for (let k = 0; k < S; k++) prev[k] = score(lines[0], offsetAt(k)) - 0.001 * Math.abs(offsetAt(k));
+    for (let k = 0; k < S; k++) prev[k] = gain(lines[0], offsetAt(k)) - 0.001 * Math.abs(offsetAt(k));
     const back = [];
+    const bestUpTo = new Int32Array(S); // argmax of prev[0..k]
     for (let i = 1; i < lines.length; i++) {
-      let bestAll = 0;
-      for (let k = 1; k < S; k++) if (prev[k] > prev[bestAll]) bestAll = k;
-      const cur = new Float32Array(S);
+      for (let k = 0; k < S; k++) bestUpTo[k] = k > 0 && prev[bestUpTo[k - 1]] >= prev[k] ? bestUpTo[k - 1] : k;
+      // Lines stay in order: the previous offset may exceed this one only by
+      // the album gap between the two lines (less a short minimum gap).
+      const slack = Math.floor((lines[i].start - lines[i - 1].start - MIN_LINE_GAP) / OFFSET_STEP);
+      const cur = new Float32Array(S).fill(-Infinity);
       const ptr = new Int32Array(S);
       for (let k = 0; k < S; k++) {
-        let bk = k;
-        for (let d = -DRIFT_BINS; d <= DRIFT_BINS; d++) {
-          const j = k + d;
-          if (j >= 0 && j < S && prev[j] > prev[bk]) bk = j;
+        const limit = Math.min(S - 1, k + slack);
+        if (limit < 0) continue;
+        let from = -1;
+        let base = -Infinity;
+        for (let j = Math.max(0, k - DRIFT_BINS); j <= Math.min(limit, k + DRIFT_BINS); j++) {
+          const v = prev[j] - DRIFT_COST * Math.abs(j - k);
+          if (v > base) {
+            from = j;
+            base = v;
+          }
         }
-        let from = bk;
-        let base = prev[bk];
-        if (prev[bestAll] - JUMP_COST > base) {
-          from = bestAll;
-          base = prev[bestAll] - JUMP_COST;
+        const far = bestUpTo[limit];
+        const jump = prev[far] - (far > k ? CUT_COST : JUMP_COST);
+        if (jump > base) {
+          from = far;
+          base = jump;
         }
-        cur[k] = base + score(lines[i], offsetAt(k));
+        cur[k] = base + gain(lines[i], offsetAt(k));
         ptr[k] = from;
       }
       back.push(ptr);

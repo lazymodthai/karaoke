@@ -61,6 +61,9 @@ test('title parsing', () => {
   assert.deepEqual(L.parseTitle('Paper Boats (Lyric Video)', 'Lunar Cats - Topic'), { artist: 'Lunar Cats', track: 'Paper Boats' });
   assert.deepEqual(L.parseTitle('เพลงสมมติ - Lunar Cats |Official MV|'), { artist: 'เพลงสมมติ', track: 'Lunar Cats' });
   assert.deepEqual(L.parseTitle('Paper Boats feat. Someone Else', 'LunarCatsVEVO'), { artist: 'LunarCats', track: 'Paper Boats' });
+  // "Artist x Artist : Song", hyphenated artist names
+  assert.deepEqual(L.parseTitle('LUNAR-CATS x PAPERMOON : เพลงสมมติ ? [Prod.by Someone]', 'LUNAR-CATS'), { artist: 'LUNAR-CATS', track: 'เพลงสมมติ ?' });
+  assert.deepEqual(L.parseTitle('Lunar Cats & Papermoon - Paper Boats'), { artist: 'Lunar Cats', track: 'Paper Boats' });
 });
 
 test('LRCLIB pick prefers matching name and close duration', () => {
@@ -197,4 +200,45 @@ test('caption track choice prefers the lyrics language, never a stray translatio
   assert.equal(pick([{ lang: 'th-TH', kind: '' }, { lang: 'th', kind: 'asr' }], 'x', 'en'), 'th-TH');
   assert.equal(pick([{ lang: 'ja', kind: '' }], 'x', 'auto'), 'ja');
   assert.equal(pick([], 'x', 'th'), null);
+});
+
+test('vocal alignment stays in order on dense lines with a guitar solo bleeding into the vocals', () => {
+  // Album timing of a real song (text invented): short gaps, a solo after line 17.
+  const starts = [11.28, 14.03, 16.67, 22.03, 24.66, 27.43, 30.91, 36.5, 43.32, 45.9, 48.65, 54.03, 56.65, 59.36, 63.18, 68.84, 73.96, 79.26,
+    106.48, 127.08, 132.65, 138.19, 143.43, 148.64, 151.14, 153.6, 156.52];
+  const lines = L.parseLrc(starts.map((s, i) => `[${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(2).padStart(5, '0')}]line ${i}`).join('\n'));
+  // Video: +2.5 s intro, and the solo runs 3 s longer (+5.5 s after it).
+  const shift = (i) => (i < 18 ? 2.5 : 5.5);
+  const frameSec = 0.05;
+  const env = new Float32Array(Math.ceil(180 / frameSec)).fill(-60);
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const loud = (t0, t1) => {
+    for (let t = t0; t < t1; t += frameSec) if (rand() > 0.1) env[Math.floor(t / frameSec)] = -14 + rand() * 4;
+  };
+  lines.forEach((l, i) => {
+    const s = l.start + shift(i);
+    loud(s, s + Math.min(l.end - l.start - 0.4, 5));
+  });
+  loud(84, 108); // distorted guitar solo leaking into the vocal stem
+  loud(166, 176); // outro ad-libs not in the lyrics
+
+  const check = (aligned, upTo) => {
+    assert.ok(aligned, `alignment should succeed (analysed to ${upTo} s)`);
+    aligned.forEach((l, i) => {
+      if (i > 0) assert.ok(l.start > aligned[i - 1].start, `line ${i} out of order`);
+      if (lines[i].start + shift(i) > upTo) return;
+      const expected = lines[i].start + shift(i);
+      assert.ok(Math.abs(l.start - expected) <= 0.4, `line ${i}: ${l.start.toFixed(2)} vs ${expected.toFixed(2)} (analysed to ${upTo} s)`);
+    });
+  };
+  check(L.alignToVocals(lines, env, frameSec), 180);
+  // While the song is still being analysed, unanalysed lines keep the last offset.
+  for (const upTo of [40, 70]) {
+    const partial = env.map((v, f) => (f * frameSec < upTo ? v : NaN));
+    const aligned = L.alignToVocals(lines, partial, frameSec);
+    check(aligned, upTo);
+    const last = aligned.at(-1).start - lines.at(-1).start;
+    assert.ok(Math.abs(last - 2.5) <= 1, `unanalysed tail drifted to offset ${last.toFixed(1)} (analysed to ${upTo} s)`);
+  }
 });
